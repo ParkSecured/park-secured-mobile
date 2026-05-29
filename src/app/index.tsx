@@ -1,16 +1,65 @@
-import { useState } from 'react';
-import { Alert, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+
+import * as Application from 'expo-application';
+import { useEffect, useState } from 'react';
+import { Alert, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { styles } from './styles';
+
+interface AuditLog {
+  event_id: number;
+  event_type: string;
+  event_status: string;
+  gate_code: string;
+  notes: string;
+}
 
 export default function HomeScreen() {
-  const [email, setEmail] = useState("manager.20260521173123@parksecure.local");
-  const [parola, setParola] = useState("manager123");
-  
+  // --- State-uri Login ---
+  const [email, setEmail] = useState("operator.demo@parksecure.local");
+  const [parola, setParola] = useState("admin123");
   const [isAutentificat, setIsAutentificat] = useState(false);
   const [accessSeedSalvat, setAccessSeedSalvat] = useState<string | null>(null);
-  const [statusMesaj, setStatusMesaj] = useState("Dispozitiv nesincronizat. Autentifică-te.");
-  const [deviceUuid] = useState(`${Platform.OS}-hw-${Math.floor(10000 + Math.random() * 90000)}`);
+  const [statusMesaj, setStatusMesaj] = useState("Se inițializează identificatorul hardware...");
+  const [deviceUuid, setDeviceUuid] = useState<string>("");
 
-  // PASUL 1: Trimite datele la serverul de pe Mac ca SĂ FIE VERIFICATE ACOLO
+  // --- State-uri Date Angajat & Audit ---
+  const [numeAngajat, setNumeAngajat] = useState("");
+  const [rolAngajat, setRolAngajat] = useState("");
+  const [orarAcces] = useState("08:00 - 17:00");
+  const [aprobatDe] = useState("HR - Manager Sorin");
+  const [istoricAudit, setIstoricAudit] = useState<AuditLog[]>([]);
+  const [statisticaPrezență, setStatisticaPrezență] = useState(0);
+
+  // 🔄 Preluare ID Hardware la pornire
+  useEffect(() => {
+    async function obtineIdHardware() {
+      try {
+        let idUnic = "";
+        if (Platform.OS === 'android') {
+          idUnic = Application.androidId || `android-fallback-${Math.floor(1000 + Math.random() * 9000)}`;
+        } else if (Platform.OS === 'ios') {
+          const iosId = await Application.getIosIdForVendorAsync();
+          idUnic = iosId || `ios-fallback-${Math.floor(1000 + Math.random() * 9000)}`;
+        }
+        setDeviceUuid(idUnic);
+        setStatusMesaj("Dispozitiv securizat pregătit.");
+      } catch (error) {
+        setDeviceUuid(`fallback-${Platform.OS}-12345`);
+        setStatusMesaj("Eroare inițializare hardware.");
+      }
+    }
+    obtineIdHardware();
+  }, []);
+
+  const incarcaDateAuditPlausibile = () => {
+    const loguriSimulate: AuditLog[] = [
+      { event_id: 101, event_type: "ENTRY", event_status: "ALLOWED", gate_code: "GATE_MAIN", notes: "Acces validat prin sesiune unică" },
+      { event_id: 102, event_type: "EXIT", event_status: "ALLOWED", gate_code: "GATE_MAIN", notes: "Părăsire incintă automată" },
+    ];
+    setIstoricAudit(loguriSimulate);
+    setStatisticaPrezență(loguriSimulate.length);
+  };
+
+  // Pasul 1: Conectare în Sistem
   const handleLoginSiInregistrare = async () => {
     if (!email.trim() || !parola.trim()) {
       Alert.alert("Eroare", "Te rugăm să introduci email-ul și parola.");
@@ -20,7 +69,6 @@ export default function HomeScreen() {
     try {
       setStatusMesaj("Se verifică credențialele în Cloud...");
       
-      // Telefonul doar TRIMITE datele, serverul face magia cu BCrypt și SQL
       const response = await fetch('http://172.20.10.4:5001/api/mobile/login-secure', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -35,53 +83,95 @@ export default function HomeScreen() {
       const data = await response.json();
 
       if (!response.ok || !data.success) {
-        Alert.alert("Eroare", data.message || "Credentiale incorecte.");
+        Alert.alert("Eroare", data.message || "Credențiale incorecte sau dispozitiv blocat.");
         setStatusMesaj("Autentificare eșuată.");
         return;
       }
 
       setAccessSeedSalvat(data.accessSeed);
+      setNumeAngajat(data.user.name);
+      setRolAngajat(data.user.role);
       setIsAutentificat(true);
-      setStatusMesaj("Sesiune activă. Dispozitiv gata de utilizare.");
-      Alert.alert("Succes!", "Sesiune securizată creată în baza de date.");
+      setStatusMesaj("Sesiune activă. Dispozitiv gata.");
+      incarcaDateAuditPlausibile();
+      Alert.alert("Succes!", `Bine ai venit, ${data.user.name}!`);
 
     } catch (error) {
       Alert.alert("Eroare rețea", "Nu s-a putut contacta serverul backend.");
     }
   };
 
-  // PASUL 2: Trimite seed-ul primit înapoi la server pentru deblocare
-  const handleAtingePentruAcces = async () => {
+  // 🚪 Pasul 2 Unificat: Trimite acțiunea (ENTRY sau EXIT) către server
+  const handleActionarePoarta = async (tipActiune: 'ENTRY' | 'EXIT') => {
     if (!accessSeedSalvat) return;
 
     try {
-      setStatusMesaj("Se transmite jetonul de sesiune...");
+      setStatusMesaj(`Se transmite cererea de ${tipActiune === 'ENTRY' ? 'Intrare' : 'Ieșire'}...`);
 
       const response = await fetch('http://172.20.10.4:5001/api/validate-access', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accessSeed: accessSeedSalvat }), 
+        body: JSON.stringify({ 
+          accessSeed: accessSeedSalvat,
+          direction: tipActiune // 🎯 Trimitem direcția (Nou!)
+        }), 
       });
 
       const data = await response.json();
 
       if (response.ok && data.authorized) {
-        Alert.alert("Acces Permis", `🟢 Poartă deblocată!\nBine ai venit, ${data.name}!`);
-        setStatusMesaj("Poarta a fost deschisă!");
+        const mesajAlerta = tipActiune === 'ENTRY' ? "🟢 Poartă deblocată! Bine ai venit." : "🔴 Poartă deblocată! Drum bun spre casă.";
+        Alert.alert("Acces Permis", mesajAlerta);
+        setStatusMesaj(tipActiune === 'ENTRY' ? "Poarta a fost deschisă pentru Intrare!" : "Poarta a fost deschisă pentru Ieșire!");
+        
+        // Adăugăm scanarea live în auditul de pe ecran
+        const nouLog: AuditLog = {
+          event_id: Date.now(),
+          event_type: tipActiune,
+          event_status: "ALLOWED",
+          gate_code: "GATE_MAIN",
+          notes: tipActiune === 'ENTRY' ? "Acces validat prin aplicație" : "Părăsire incintă confirmată"
+        };
+        setIstoricAudit(prev => [nouLog, ...prev]);
+        setStatisticaPrezență(prev => prev + 1);
       } else {
         Alert.alert("Acces Respins", data.message || "Sesiune invalidă.");
       }
     } catch (error) {
-      Alert.alert("Eroare", "Eroare de rețea locală.");
+      Alert.alert("Eroare rețea", "Nu s-a putut contacta serverul local.");
     }
+  };
+
+  // 🔄 LOGOUT: Șterge datele temporare și readuce ecranul de Login
+  const handleDeconectare = () => {
+    Alert.alert(
+      "Deconectare",
+      "Sigur doriți să închideți sesiunea securizată pe acest dispozitiv?",
+      [
+        { text: "Anulează", style: "cancel" },
+        { 
+          text: "Da, Logout", 
+          style: "destructive",
+          onPress: () => {
+            setAccessSeedSalvat(null);
+            setIsAutentificat(false);
+            setNumeAngajat("");
+            setRolAngajat("");
+            setIstoricAudit([]);
+            setStatusMesaj("Sesiune închisă cu succes. Dispozitiv pregătit.");
+          }
+        }
+      ]
+    );
   };
 
   return (
     <View style={styles.container}>
       <Text style={styles.titlu}>ParkSecured MobileID</Text>
-      <Text style={styles.subtitlu}>Sistem de Validare Securizată</Text>
+      <Text style={styles.subtitlu}>Sistem de Gestiune și Audit Automat</Text>
       
       {!isAutentificat ? (
+        // ---------------- INTERFAȚA DE LOGIN ----------------
         <View style={styles.card}>
           <Text style={styles.statusLabel}>Autentificare Cont Angajat:</Text>
           <TextInput style={styles.input} value={email} onChangeText={setEmail} placeholder="Email" autoCapitalize="none" />
@@ -91,36 +181,74 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
       ) : (
-        <View style={styles.card}>
-          <Text style={styles.statusLabel}>Sesiune Activă Utilizator:</Text>
-          <Text style={styles.emailText}>👤 {email}</Text>
-          <Text style={styles.statusLabel}>Token Sesiune (accessSeed):</Text>
-          <Text style={styles.seedText}>🔑 {accessSeedSalvat?.substring(0, 32)}...</Text>
+        // ---------------- INTERFAȚA DE AUDIT & DASHBOARD ----------------
+        <ScrollView style={styles.dashboardContainer} showsVerticalScrollIndicator={false}>
+          
+          {/* Card Profil cu buton de Logout integrat */}
+          <View style={styles.card}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={styles.statusLabel}>Profil Angajat Autentificat</Text>
+              <TouchableOpacity onPress={handleDeconectare}>
+                <Text style={{ color: '#ef4444', fontSize: 12, fontWeight: 'bold' }}>🚪 Deconectare</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.numeText}>👤 {numeAngajat}</Text>
+            <Text style={styles.detaliuText}>💼 Rol: <Text style={{fontWeight: '700'}}>{rolAngajat}</Text></Text>
+            <Text style={styles.detaliuText}>⏰ Orar Permis: {orarAcces}</Text>
+          </View>
+
+          {/* Card Statistici */}
+          <View style={styles.statsCard}>
+            <Text style={styles.statsLabel}>Statistica Prezență (Luna Curentă)</Text>
+            <Text style={styles.statsNumar}>⚡ {statisticaPrezență} Mișcări înregistrate</Text>
+          </View>
+
+          {/* Listă Istoric Audit Live */}
+          <Text style={styles.sectiuneTitlu}>📋 Istoric Prezență & Audit (Personal)</Text>
+          {istoricAudit.map((log) => (
+            <View key={log.event_id} style={styles.logCard}>
+              <View style={styles.logHeader}>
+                <Text style={[styles.badge, log.event_type === 'ENTRY' ? styles.badgeIntrare : styles.badgeIesire]}>
+                  {log.event_type === 'ENTRY' ? 'INTRARE (ENTRY)' : 'IEȘIRE (EXIT)'}
+                </Text>
+                <Text style={styles.gateText}>🚪 {log.gate_code}</Text>
+              </View>
+              <Text style={styles.notesText}>{log.notes}</Text>
+            </View>
+          ))}
+          <View style={{ height: 20 }} />
+        </ScrollView>
+      )}
+
+      {/* Bara de status de jos */}
+      <View style={styles.statusCard}>
+        <Text style={styles.statusText}>ℹ️ Status: {statusMesaj}</Text>
+      </View>
+
+      {/* 🚀 Zona celor două butoane la îndemână (Se afișează doar dacă este autentificat) */}
+      {isAutentificat && (
+        <View style={{ flexDirection: 'row', width: '100%', gap: 10 }}>
+          <TouchableOpacity 
+            style={[styles.butonAcces, { flex: 1 }]} 
+            onPress={() => handleActionarePoarta('ENTRY')}
+          >
+            <Text style={styles.butonText}>🟢 Intrare Poartă</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={[styles.butonAcces, { flex: 1, backgroundColor: '#d97706', shadowColor: '#d97706' }]} 
+            onPress={() => handleActionarePoarta('EXIT')}
+          >
+            <Text style={styles.butonText}>🟠 Ieșire Poartă</Text>
+          </TouchableOpacity>
         </View>
       )}
 
-      <View style={styles.statusCard}><Text style={styles.statusText}>ℹ️ Status: {statusMesaj}</Text></View>
-
-      <TouchableOpacity style={[styles.butonAcces, !isAutentificat && styles.butonDezactivat]} onPress={handleAtingePentruAcces} disabled={!isAutentificat}>
-        <Text style={styles.butonText}>Pasul 2: Atinge pentru Acces</Text>
-      </TouchableOpacity>
+      {!isAutentificat && (
+        <TouchableOpacity style={[styles.butonAcces, styles.butonDezactivat]} disabled={true}>
+          <Text style={styles.butonText}>Așteptare Pasul 1 (Conectare)</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f9fafb', alignItems: 'center', justifyContent: 'center', padding: 20 },
-  titlu: { fontSize: 24, fontWeight: 'bold', color: '#111827', marginBottom: 5 },
-  subtitlu: { fontSize: 13, color: '#6b7280', marginBottom: 30, textAlign: 'center' },
-  card: { backgroundColor: '#fff', padding: 20, borderRadius: 16, width: '100%', marginBottom: 15, borderWidth: 1, borderColor: '#e5e7eb' },
-  statusCard: { width: '100%', padding: 12, backgroundColor: '#eff6ff', borderRadius: 8, marginBottom: 25 },
-  statusLabel: { fontSize: 11, color: '#9ca3af', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: 5, marginTop: 5 },
-  input: { width: '100%', height: 45, borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8, paddingHorizontal: 10, fontSize: 14, marginBottom: 10, backgroundColor: '#f9fafb', color: '#111827' },
-  emailText: { fontSize: 14, fontWeight: '600', color: '#059669', marginBottom: 5 },
-  seedText: { fontSize: 12, color: '#2563eb', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' },
-  statusText: { fontSize: 13, color: '#1d4ed8', fontWeight: '500', textAlign: 'center' },
-  butonLogin: { backgroundColor: '#10b981', paddingVertical: 12, borderRadius: 8, width: '100%', alignItems: 'center', marginTop: 5 },
-  butonAcces: { backgroundColor: '#2563eb', paddingVertical: 16, borderRadius: 12, width: '100%', alignItems: 'center' },
-  butonDezactivat: { backgroundColor: '#9ca3af', opacity: 0.6 },
-  butonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-});
