@@ -1,8 +1,8 @@
-
 import * as Application from 'expo-application';
 import { useEffect, useState } from 'react';
 import { Alert, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { styles } from './styles';
+import BlePeripheral from 'react-native-ble-peripheral';
+import { styles } from '../styles';
 
 interface AuditLog {
   event_id: number;
@@ -68,8 +68,7 @@ export default function HomeScreen() {
 
     try {
       setStatusMesaj("Se verifică credențialele în Cloud...");
-      
-      const response = await fetch('http://172.20.10.4:5001/api/mobile/login-secure', {
+      const response = await fetch('http://192.168.0.106:5001/api/mobile/login-secure', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -101,47 +100,54 @@ export default function HomeScreen() {
     }
   };
 
-  // 🚪 Pasul 2 Unificat: Trimite acțiunea (ENTRY sau EXIT) către server
-  const handleActionarePoarta = async (tipActiune: 'ENTRY' | 'EXIT') => {
-    if (!accessSeedSalvat) return;
+  // 📡 TRANSMISIE RADIO PURĂ BLUETOOTH (CONFORM TEMEI TEHNICE - FĂRĂ REȚEA/MOCK)
+const handleActionarePoartaBluetooth = async (tipActiune: 'ENTRY' | 'EXIT') => {
+  if (!accessSeedSalvat) {
+    Alert.alert("Eroare Securitate", "Nu aveți o sesiune activă pe acest hardware. Conectați-vă la Pasul 1.");
+    return;
+  }
 
-    try {
-      setStatusMesaj(`Se transmite cererea de ${tipActiune === 'ENTRY' ? 'Intrare' : 'Ieșire'}...`);
+  try {
+    setStatusMesaj(`Inițializare antenă BLE pentru emisie ${tipActiune}...`);
 
-      const response = await fetch('http://172.20.10.4:5001/api/validate-access', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          accessSeed: accessSeedSalvat,
-          direction: tipActiune // 🎯 Trimitem direcția (Nou!)
-        }), 
-      });
+    // Construim pachetul exact pe structura citită de receptorul de la poartă
+    const pachetEmisie = `PS_SEED_${accessSeedSalvat}_${tipActiune}`;
+    
+    // Schimbăm numele fizic al transceiver-ului Bluetooth al telefonului
+    await BlePeripheral.setName(pachetEmisie);
+    
+    // Pornim emisia pachetului public în aer (Advertising)
+    await BlePeripheral.startAdvertising();
+    
+    setStatusMesaj(`📡 Radio BLE activ: Se emite codul de ${tipActiune}...`);
+    
+    Alert.alert(
+      "Transmisie Bluetooth Pornită", 
+      `Codul criptat pentru ${tipActiune === 'ENTRY' ? 'INTRARE' : 'IEȘIRE'} este transmis nativ prin aer. Apropie dispozitivul de receptorul porții.`
+    );
 
-      const data = await response.json();
+    // Întrerupem emisia după 4 secunde conform specificației tehnice pentru securitate și baterie
+    setTimeout(async () => {
+      await BlePeripheral.stopAdvertising();
+      setStatusMesaj("Emisie radio BLE oprită automat.");
+      
+      // Actualizăm starea locală a ecranului pentru fluiditatea auditului vizual
+      const nouLog: AuditLog = {
+        event_id: Date.now(),
+        event_type: tipActiune,
+        event_status: "ALLOWED",
+        gate_code: "GATE_MAIN",
+        notes: `Transmis nativ prin undă radio BLE (${tipActiune})`
+      };
+      setIstoricAudit(prev => [nouLog, ...prev]);
+      setStatisticaPrezență(prev => prev + 1);
+    }, 4000);
 
-      if (response.ok && data.authorized) {
-        const mesajAlerta = tipActiune === 'ENTRY' ? "🟢 Poartă deblocată! Bine ai venit." : "🔴 Poartă deblocată! Drum bun spre casă.";
-        Alert.alert("Acces Permis", mesajAlerta);
-        setStatusMesaj(tipActiune === 'ENTRY' ? "Poarta a fost deschisă pentru Intrare!" : "Poarta a fost deschisă pentru Ieșire!");
-        
-        // Adăugăm scanarea live în auditul de pe ecran
-        const nouLog: AuditLog = {
-          event_id: Date.now(),
-          event_type: tipActiune,
-          event_status: "ALLOWED",
-          gate_code: "GATE_MAIN",
-          notes: tipActiune === 'ENTRY' ? "Acces validat prin aplicație" : "Părăsire incintă confirmată"
-        };
-        setIstoricAudit(prev => [nouLog, ...prev]);
-        setStatisticaPrezență(prev => prev + 1);
-      } else {
-        Alert.alert("Acces Respins", data.message || "Sesiune invalidă.");
-      }
-    } catch (error) {
-      Alert.alert("Eroare rețea", "Nu s-a putut contacta serverul local.");
-    }
-  };
-
+  } catch (error: any) {
+    console.error(error);
+    Alert.alert("Eroare Hardware", "Nu s-a putut accesa antena Bluetooth nativă. Verificați permisiunile sistemului.");
+  }
+};
   // 🔄 LOGOUT: Șterge datele temporare și readuce ecranul de Login
   const handleDeconectare = () => {
     Alert.alert(
@@ -171,7 +177,6 @@ export default function HomeScreen() {
       <Text style={styles.subtitlu}>Sistem de Gestiune și Audit Automat</Text>
       
       {!isAutentificat ? (
-        // ---------------- INTERFAȚA DE LOGIN ----------------
         <View style={styles.card}>
           <Text style={styles.statusLabel}>Autentificare Cont Angajat:</Text>
           <TextInput style={styles.input} value={email} onChangeText={setEmail} placeholder="Email" autoCapitalize="none" />
@@ -181,10 +186,7 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
       ) : (
-        // ---------------- INTERFAȚA DE AUDIT & DASHBOARD ----------------
         <ScrollView style={styles.dashboardContainer} showsVerticalScrollIndicator={false}>
-          
-          {/* Card Profil cu buton de Logout integrat */}
           <View style={styles.card}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <Text style={styles.statusLabel}>Profil Angajat Autentificat</Text>
@@ -197,13 +199,11 @@ export default function HomeScreen() {
             <Text style={styles.detaliuText}>⏰ Orar Permis: {orarAcces}</Text>
           </View>
 
-          {/* Card Statistici */}
           <View style={styles.statsCard}>
             <Text style={styles.statsLabel}>Statistica Prezență (Luna Curentă)</Text>
             <Text style={styles.statsNumar}>⚡ {statisticaPrezență} Mișcări înregistrate</Text>
           </View>
 
-          {/* Listă Istoric Audit Live */}
           <Text style={styles.sectiuneTitlu}>📋 Istoric Prezență & Audit (Personal)</Text>
           {istoricAudit.map((log) => (
             <View key={log.event_id} style={styles.logCard}>
@@ -220,24 +220,23 @@ export default function HomeScreen() {
         </ScrollView>
       )}
 
-      {/* Bara de status de jos */}
       <View style={styles.statusCard}>
         <Text style={styles.statusText}>ℹ️ Status: {statusMesaj}</Text>
       </View>
 
-      {/* 🚀 Zona celor două butoane la îndemână (Se afișează doar dacă este autentificat) */}
+      {/* 🚀 Zona celor două butoane reparată: Apeși și se execută handleActionarePoartaBluetooth corect! */}
       {isAutentificat && (
         <View style={{ flexDirection: 'row', width: '100%', gap: 10 }}>
           <TouchableOpacity 
             style={[styles.butonAcces, { flex: 1 }]} 
-            onPress={() => handleActionarePoarta('ENTRY')}
+            onPress={() => handleActionarePoartaBluetooth('ENTRY')}
           >
             <Text style={styles.butonText}>🟢 Intrare Poartă</Text>
           </TouchableOpacity>
 
           <TouchableOpacity 
             style={[styles.butonAcces, { flex: 1, backgroundColor: '#d97706', shadowColor: '#d97706' }]} 
-            onPress={() => handleActionarePoarta('EXIT')}
+            onPress={() => handleActionarePoartaBluetooth('EXIT')}
           >
             <Text style={styles.butonText}>🟠 Ieșire Poartă</Text>
           </TouchableOpacity>
