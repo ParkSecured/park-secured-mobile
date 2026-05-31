@@ -1,8 +1,13 @@
 import * as Application from 'expo-application';
-import { useEffect, useState } from 'react';
-import { Alert, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { styles } from './styles';
+
+const BACKEND_URL = 'https://park-secured-backend.onrender.com';
+const CLOUD_URL = 'https://park-secured-cloud.onrender.com/api';
+const PENDING_POLL_INTERVAL = 3000;
+const PENDING_TIMEOUT = 60000;
 
 interface AuditLog {
   event_id: number;
@@ -24,6 +29,22 @@ export default function HomeScreen() {
   const [orarAcces] = useState("08:00 - 17:00");
   const [istoricAudit, setIstoricAudit] = useState<AuditLog[]>([]);
   const [statisticaPrezență, setStatisticaPrezență] = useState(0);
+  const [isPending, setIsPending] = useState(false);
+  const [pendingTipActiune, setPendingTipActiune] = useState<'ENTRY' | 'EXIT' | null>(null);
+
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const stopPolling = () => {
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+    pollIntervalRef.current = null;
+    pollTimeoutRef.current = null;
+  };
+
+  useEffect(() => {
+    return () => stopPolling();
+  }, []);
 
   useEffect(() => {
     async function obtineIdHardware() {
@@ -62,15 +83,10 @@ export default function HomeScreen() {
 
     try {
       setStatusMesaj("Se verifică credențialele în Cloud...");
-      const response = await fetch('https://park-secured-backend.onrender.com/api/mobile/login-secure', {
+      const response = await fetch(`${BACKEND_URL}/api/mobile/login-secure`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: email,
-          password: parola,
-          platform: Platform.OS,
-          deviceIdentifier: deviceUuid
-        })
+        body: JSON.stringify({ email, password: parola, platform: Platform.OS, deviceIdentifier: deviceUuid })
       });
 
       const data = await response.json();
@@ -88,10 +104,70 @@ export default function HomeScreen() {
       setStatusMesaj("Sesiune activă. Dispozitiv gata.");
       incarcaDateAuditPlausibile();
       Alert.alert("Succes!", `Bine ai venit, ${data.user.name}!`);
-
     } catch (error) {
       Alert.alert("Eroare rețea", "Nu s-a putut contacta serverul backend.");
     }
+  };
+
+  const startPendingPolling = (eventId: number, tipActiune: 'ENTRY' | 'EXIT') => {
+    setIsPending(true);
+    setPendingTipActiune(tipActiune);
+    setStatusMesaj("⏳ Aștept răspunsul portarului...");
+
+    const poll = async () => {
+      try {
+        const response = await fetch(`${CLOUD_URL}/access-events/${eventId}/status`);
+        const data = await response.json();
+        const event = data.data;
+
+        if (!event || event.eventStatus === 'PENDING') return; // mai așteptăm
+
+        stopPolling();
+        setIsPending(false);
+        setPendingTipActiune(null);
+
+        if (event.eventStatus === 'ALLOWED') {
+          setStatusMesaj(`✅ ${tipActiune === 'ENTRY' ? 'Intrare' : 'Ieșire'} aprobată de portar.`);
+          Alert.alert(
+            tipActiune === 'ENTRY' ? "✅ Intrare Permisă" : "✅ Ieșire Permisă",
+            "Portarul a aprobat accesul. Poarta se deschide."
+          );
+          const nouLog: AuditLog = {
+            event_id: eventId,
+            event_type: tipActiune,
+            event_status: "ALLOWED",
+            gate_code: "GATE_MAIN",
+            notes: "Aprobat de portar (în afara orarului)"
+          };
+          setIstoricAudit(prev => [nouLog, ...prev]);
+          setStatisticaPrezență(prev => prev + 1);
+        } else {
+          setStatusMesaj("❌ Acces refuzat de portar.");
+          Alert.alert("❌ Acces Refuzat", "Portarul a refuzat accesul.");
+          const nouLog: AuditLog = {
+            event_id: eventId,
+            event_type: tipActiune,
+            event_status: "DENIED",
+            gate_code: "GATE_MAIN",
+            notes: "Refuzat de portar (în afara orarului)"
+          };
+          setIstoricAudit(prev => [nouLog, ...prev]);
+        }
+      } catch {
+        // ignorăm erorile de rețea în polling, încercăm din nou
+      }
+    };
+
+    pollIntervalRef.current = setInterval(poll, PENDING_POLL_INTERVAL);
+
+    // Timeout după 1 minut
+    pollTimeoutRef.current = setTimeout(() => {
+      stopPolling();
+      setIsPending(false);
+      setPendingTipActiune(null);
+      setStatusMesaj("⏱️ Timp expirat. Niciun răspuns de la portar.");
+      Alert.alert("Timp expirat", "Portarul nu a răspuns în timp util. Accesul a fost refuzat automat.");
+    }, PENDING_TIMEOUT);
   };
 
   const handleActionarePoarta = async (tipActiune: 'ENTRY' | 'EXIT') => {
@@ -100,19 +176,27 @@ export default function HomeScreen() {
       return;
     }
 
+    if (isPending) {
+      Alert.alert("Așteptare", "O cerere este deja în curs de aprobare.");
+      return;
+    }
+
     try {
       setStatusMesaj(`Se trimite cerere de ${tipActiune === 'ENTRY' ? 'intrare' : 'ieșire'} către server...`);
 
-      const response = await fetch('https://park-secured-backend.onrender.com/api/validate-access', {
+      const response = await fetch(`${BACKEND_URL}/api/validate-access`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          accessSeed: accessSeedSalvat,
-          direction: tipActiune
-        })
+        body: JSON.stringify({ accessSeed: accessSeedSalvat, direction: tipActiune })
       });
 
       const data = await response.json();
+
+      // Acces în afara intervalului orar — așteptăm portarul
+      if (data.status === 'PENDING' && data.eventId) {
+        startPendingPolling(data.eventId, tipActiune);
+        return;
+      }
 
       if (!response.ok || !data.authorized) {
         Alert.alert("Acces Refuzat", data.message || "Acces neautorizat.");
@@ -135,7 +219,6 @@ export default function HomeScreen() {
       };
       setIstoricAudit(prev => [nouLog, ...prev]);
       setStatisticaPrezență(prev => prev + 1);
-
     } catch (error) {
       Alert.alert("Eroare rețea", "Nu s-a putut contacta serverul backend.");
       setStatusMesaj("Eroare de rețea.");
@@ -152,11 +235,14 @@ export default function HomeScreen() {
           text: "Da, Logout",
           style: "destructive",
           onPress: () => {
+            stopPolling();
             setAccessSeedSalvat(null);
             setIsAutentificat(false);
             setNumeAngajat("");
             setRolAngajat("");
             setIstoricAudit([]);
+            setIsPending(false);
+            setPendingTipActiune(null);
             setStatusMesaj("Sesiune închisă cu succes. Dispozitiv pregătit.");
           }
         }
@@ -192,6 +278,22 @@ export default function HomeScreen() {
             <Text style={styles.detaliuText}>⏰ Orar Permis: {orarAcces}</Text>
           </View>
 
+          {isPending && (
+            <View style={[styles.card, { borderColor: '#d97706', borderWidth: 2, backgroundColor: '#fffbeb' }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <ActivityIndicator size="small" color="#d97706" />
+                <View>
+                  <Text style={{ fontWeight: '700', color: '#92400e', fontSize: 15 }}>
+                    {pendingTipActiune === 'ENTRY' ? '🟡 Intrare în afara orarului' : '🟡 Ieșire în afara orarului'}
+                  </Text>
+                  <Text style={{ color: '#b45309', fontSize: 13, marginTop: 4 }}>
+                    Aștept răspunsul portarului... (max 1 minut)
+                  </Text>
+                </View>
+              </View>
+            </View>
+          )}
+
           <View style={styles.statsCard}>
             <Text style={styles.statsLabel}>Statistica Prezență (Luna Curentă)</Text>
             <Text style={styles.statsNumar}>⚡ {statisticaPrezență} Mișcări înregistrate</Text>
@@ -220,15 +322,17 @@ export default function HomeScreen() {
       {isAutentificat && (
         <View style={{ flexDirection: 'row', width: '100%', gap: 10 }}>
           <TouchableOpacity
-            style={[styles.butonAcces, { flex: 1 }]}
+            style={[styles.butonAcces, { flex: 1, opacity: isPending ? 0.5 : 1 }]}
             onPress={() => handleActionarePoarta('ENTRY')}
+            disabled={isPending}
           >
             <Text style={styles.butonText}>🟢 Intrare Poartă</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.butonAcces, { flex: 1, backgroundColor: '#d97706', shadowColor: '#d97706' }]}
+            style={[styles.butonAcces, { flex: 1, backgroundColor: '#d97706', shadowColor: '#d97706', opacity: isPending ? 0.5 : 1 }]}
             onPress={() => handleActionarePoarta('EXIT')}
+            disabled={isPending}
           >
             <Text style={styles.butonText}>🟠 Ieșire Poartă</Text>
           </TouchableOpacity>
