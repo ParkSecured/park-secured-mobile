@@ -1,8 +1,8 @@
 import * as Application from 'expo-application';
 import { useEffect, useState } from 'react';
 import { Alert, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import BlePeripheral from 'react-native-ble-peripheral';
-import { styles } from '../styles';
+
+import { styles } from './styles';
 
 interface AuditLog {
   event_id: number;
@@ -13,29 +13,24 @@ interface AuditLog {
 }
 
 export default function HomeScreen() {
-  // --- State-uri Login ---
   const [email, setEmail] = useState("operator.demo@parksecure.local");
   const [parola, setParola] = useState("admin123");
   const [isAutentificat, setIsAutentificat] = useState(false);
   const [accessSeedSalvat, setAccessSeedSalvat] = useState<string | null>(null);
   const [statusMesaj, setStatusMesaj] = useState("Se inițializează identificatorul hardware...");
   const [deviceUuid, setDeviceUuid] = useState<string>("");
-
-  // --- State-uri Date Angajat & Audit ---
   const [numeAngajat, setNumeAngajat] = useState("");
   const [rolAngajat, setRolAngajat] = useState("");
   const [orarAcces] = useState("08:00 - 17:00");
-  const [aprobatDe] = useState("HR - Manager Sorin");
   const [istoricAudit, setIstoricAudit] = useState<AuditLog[]>([]);
   const [statisticaPrezență, setStatisticaPrezență] = useState(0);
 
-  // 🔄 Preluare ID Hardware la pornire
   useEffect(() => {
     async function obtineIdHardware() {
       try {
         let idUnic = "";
         if (Platform.OS === 'android') {
-          idUnic = Application.androidId || `android-fallback-${Math.floor(1000 + Math.random() * 9000)}`;
+          idUnic = Application.getAndroidId() || `android-fallback-${Math.floor(1000 + Math.random() * 9000)}`;
         } else if (Platform.OS === 'ios') {
           const iosId = await Application.getIosIdForVendorAsync();
           idUnic = iosId || `ios-fallback-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -59,7 +54,6 @@ export default function HomeScreen() {
     setStatisticaPrezență(loguriSimulate.length);
   };
 
-  // Pasul 1: Conectare în Sistem
   const handleLoginSiInregistrare = async () => {
     if (!email.trim() || !parola.trim()) {
       Alert.alert("Eroare", "Te rugăm să introduci email-ul și parola.");
@@ -68,7 +62,7 @@ export default function HomeScreen() {
 
     try {
       setStatusMesaj("Se verifică credențialele în Cloud...");
-      const response = await fetch('http://192.168.0.106:5001/api/mobile/login-secure', {
+      const response = await fetch('https://park-secured-backend.onrender.com/api/mobile/login-secure', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -100,63 +94,62 @@ export default function HomeScreen() {
     }
   };
 
-  // 📡 TRANSMISIE RADIO PURĂ BLUETOOTH (CONFORM TEMEI TEHNICE - FĂRĂ REȚEA/MOCK)
-const handleActionarePoartaBluetooth = async (tipActiune: 'ENTRY' | 'EXIT') => {
-  if (!accessSeedSalvat) {
-    Alert.alert("Eroare Securitate", "Nu aveți o sesiune activă pe acest hardware. Conectați-vă la Pasul 1.");
-    return;
-  }
+  const handleActionarePoarta = async (tipActiune: 'ENTRY' | 'EXIT') => {
+    if (!accessSeedSalvat) {
+      Alert.alert("Eroare Securitate", "Nu aveți o sesiune activă. Conectați-vă mai întâi.");
+      return;
+    }
 
-  try {
-    setStatusMesaj(`Inițializare antenă BLE pentru emisie ${tipActiune}...`);
+    try {
+      setStatusMesaj(`Se trimite cerere de ${tipActiune === 'ENTRY' ? 'intrare' : 'ieșire'} către server...`);
 
-    // Construim pachetul exact pe structura citită de receptorul de la poartă
-    const pachetEmisie = `PS_SEED_${accessSeedSalvat}_${tipActiune}`;
-    
-    // Schimbăm numele fizic al transceiver-ului Bluetooth al telefonului
-    await BlePeripheral.setName(pachetEmisie);
-    
-    // Pornim emisia pachetului public în aer (Advertising)
-    await BlePeripheral.startAdvertising();
-    
-    setStatusMesaj(`📡 Radio BLE activ: Se emite codul de ${tipActiune}...`);
-    
-    Alert.alert(
-      "Transmisie Bluetooth Pornită", 
-      `Codul criptat pentru ${tipActiune === 'ENTRY' ? 'INTRARE' : 'IEȘIRE'} este transmis nativ prin aer. Apropie dispozitivul de receptorul porții.`
-    );
+      const response = await fetch('https://park-secured-backend.onrender.com/api/validate-access', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accessSeed: accessSeedSalvat,
+          direction: tipActiune
+        })
+      });
 
-    // Întrerupem emisia după 4 secunde conform specificației tehnice pentru securitate și baterie
-    setTimeout(async () => {
-      await BlePeripheral.stopAdvertising();
-      setStatusMesaj("Emisie radio BLE oprită automat.");
-      
-      // Actualizăm starea locală a ecranului pentru fluiditatea auditului vizual
+      const data = await response.json();
+
+      if (!response.ok || !data.authorized) {
+        Alert.alert("Acces Refuzat", data.message || "Acces neautorizat.");
+        setStatusMesaj("Acces refuzat de server.");
+        return;
+      }
+
+      setStatusMesaj(`✅ ${tipActiune === 'ENTRY' ? 'Intrare' : 'Ieșire'} confirmată. Poarta se deschide.`);
+      Alert.alert(
+        tipActiune === 'ENTRY' ? "✅ Intrare Permisă" : "✅ Ieșire Permisă",
+        `Bine ai venit, ${data.name || numeAngajat}! Poarta se deschide.`
+      );
+
       const nouLog: AuditLog = {
         event_id: Date.now(),
         event_type: tipActiune,
         event_status: "ALLOWED",
         gate_code: "GATE_MAIN",
-        notes: `Transmis nativ prin undă radio BLE (${tipActiune})`
+        notes: `Acces validat prin WiFi (${tipActiune})`
       };
       setIstoricAudit(prev => [nouLog, ...prev]);
       setStatisticaPrezență(prev => prev + 1);
-    }, 4000);
 
-  } catch (error: any) {
-    console.error(error);
-    Alert.alert("Eroare Hardware", "Nu s-a putut accesa antena Bluetooth nativă. Verificați permisiunile sistemului.");
-  }
-};
-  // 🔄 LOGOUT: Șterge datele temporare și readuce ecranul de Login
+    } catch (error) {
+      Alert.alert("Eroare rețea", "Nu s-a putut contacta serverul backend.");
+      setStatusMesaj("Eroare de rețea.");
+    }
+  };
+
   const handleDeconectare = () => {
     Alert.alert(
       "Deconectare",
       "Sigur doriți să închideți sesiunea securizată pe acest dispozitiv?",
       [
         { text: "Anulează", style: "cancel" },
-        { 
-          text: "Da, Logout", 
+        {
+          text: "Da, Logout",
           style: "destructive",
           onPress: () => {
             setAccessSeedSalvat(null);
@@ -175,7 +168,7 @@ const handleActionarePoartaBluetooth = async (tipActiune: 'ENTRY' | 'EXIT') => {
     <View style={styles.container}>
       <Text style={styles.titlu}>ParkSecured MobileID</Text>
       <Text style={styles.subtitlu}>Sistem de Gestiune și Audit Automat</Text>
-      
+
       {!isAutentificat ? (
         <View style={styles.card}>
           <Text style={styles.statusLabel}>Autentificare Cont Angajat:</Text>
@@ -195,7 +188,7 @@ const handleActionarePoartaBluetooth = async (tipActiune: 'ENTRY' | 'EXIT') => {
               </TouchableOpacity>
             </View>
             <Text style={styles.numeText}>👤 {numeAngajat}</Text>
-            <Text style={styles.detaliuText}>💼 Rol: <Text style={{fontWeight: '700'}}>{rolAngajat}</Text></Text>
+            <Text style={styles.detaliuText}>💼 Rol: <Text style={{ fontWeight: '700' }}>{rolAngajat}</Text></Text>
             <Text style={styles.detaliuText}>⏰ Orar Permis: {orarAcces}</Text>
           </View>
 
@@ -224,19 +217,18 @@ const handleActionarePoartaBluetooth = async (tipActiune: 'ENTRY' | 'EXIT') => {
         <Text style={styles.statusText}>ℹ️ Status: {statusMesaj}</Text>
       </View>
 
-      {/* 🚀 Zona celor două butoane reparată: Apeși și se execută handleActionarePoartaBluetooth corect! */}
       {isAutentificat && (
         <View style={{ flexDirection: 'row', width: '100%', gap: 10 }}>
-          <TouchableOpacity 
-            style={[styles.butonAcces, { flex: 1 }]} 
-            onPress={() => handleActionarePoartaBluetooth('ENTRY')}
+          <TouchableOpacity
+            style={[styles.butonAcces, { flex: 1 }]}
+            onPress={() => handleActionarePoarta('ENTRY')}
           >
             <Text style={styles.butonText}>🟢 Intrare Poartă</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={[styles.butonAcces, { flex: 1, backgroundColor: '#d97706', shadowColor: '#d97706' }]} 
-            onPress={() => handleActionarePoartaBluetooth('EXIT')}
+          <TouchableOpacity
+            style={[styles.butonAcces, { flex: 1, backgroundColor: '#d97706', shadowColor: '#d97706' }]}
+            onPress={() => handleActionarePoarta('EXIT')}
           >
             <Text style={styles.butonText}>🟠 Ieșire Poartă</Text>
           </TouchableOpacity>
