@@ -1,11 +1,14 @@
 import * as Application from 'expo-application';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator, Alert, Platform, ScrollView,
+  Text, TextInput, TouchableOpacity, View
+} from 'react-native';
 
 import { styles } from './styles';
 
 const BACKEND_URL = 'https://park-secured-backend.onrender.com';
-const CLOUD_URL = 'https://park-secured-cloud.onrender.com/api';
+const CLOUD_URL = 'https://park-secured-cloud-r62j.onrender.com/api';
 const PENDING_POLL_INTERVAL = 3000;
 const PENDING_TIMEOUT = 60000;
 
@@ -15,6 +18,15 @@ interface AuditLog {
   event_status: string;
   gate_code: string;
   notes: string;
+  event_time?: string;
+}
+
+interface Profil {
+  numeComplet: string;
+  legitimatie: string;
+  orarPermis: string;
+  divizie: string;
+  colegi: { name: string }[];
 }
 
 export default function HomeScreen() {
@@ -26,11 +38,20 @@ export default function HomeScreen() {
   const [deviceUuid, setDeviceUuid] = useState<string>("");
   const [numeAngajat, setNumeAngajat] = useState("");
   const [rolAngajat, setRolAngajat] = useState("");
-  const [orarAcces] = useState("08:00 - 17:00");
-  const [istoricAudit, setIstoricAudit] = useState<AuditLog[]>([]);
-  const [statisticaPrezență, setStatisticaPrezență] = useState(0);
+  const [orarAcces, setOrarAcces] = useState("Se încarcă...");
   const [isPending, setIsPending] = useState(false);
   const [pendingTipActiune, setPendingTipActiune] = useState<'ENTRY' | 'EXIT' | null>(null);
+
+  // Tab activ: 'acces' | 'profil' | 'prezenta'
+  const [tabActiv, setTabActiv] = useState<'acces' | 'profil' | 'prezenta'>('acces');
+
+  // Tab Profil
+  const [profil, setProfil] = useState<Profil | null>(null);
+  const [profilLoading, setProfilLoading] = useState(false);
+
+  // Tab Prezență
+  const [evenimentePrezenta, setEvenimentePrezenta] = useState<AuditLog[]>([]);
+  const [prezentaLoading, setPrezentaLoading] = useState(false);
 
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -55,6 +76,8 @@ export default function HomeScreen() {
         } else if (Platform.OS === 'ios') {
           const iosId = await Application.getIosIdForVendorAsync();
           idUnic = iosId || `ios-fallback-${Math.floor(1000 + Math.random() * 9000)}`;
+        } else {
+          idUnic = `web-${Math.random().toString(36).slice(2, 10)}`;
         }
         setDeviceUuid(idUnic);
         setStatusMesaj("Dispozitiv securizat pregătit.");
@@ -66,13 +89,34 @@ export default function HomeScreen() {
     obtineIdHardware();
   }, []);
 
-  const incarcaDateAuditPlausibile = () => {
-    const loguriSimulate: AuditLog[] = [
-      { event_id: 101, event_type: "ENTRY", event_status: "ALLOWED", gate_code: "GATE_MAIN", notes: "Acces validat prin sesiune unică" },
-      { event_id: 102, event_type: "EXIT", event_status: "ALLOWED", gate_code: "GATE_MAIN", notes: "Părăsire incintă automată" },
-    ];
-    setIstoricAudit(loguriSimulate);
-    setStatisticaPrezență(loguriSimulate.length);
+  const incarcaProfil = async (seed: string) => {
+    setProfilLoading(true);
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/mobile/profile?accessSeed=${seed}`);
+      const data = await response.json();
+      if (data.success) {
+        setProfil(data.data);
+      }
+    } catch {
+      // ignorăm, utilizatorul poate reîncerca
+    } finally {
+      setProfilLoading(false);
+    }
+  };
+
+  const incarcaPrezenta = async (seed: string) => {
+    setPrezentaLoading(true);
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/mobile/my-events?accessSeed=${seed}`);
+      const data = await response.json();
+      if (data.success) {
+        setEvenimentePrezenta(data.data);
+      }
+    } catch {
+      // ignorăm
+    } finally {
+      setPrezentaLoading(false);
+    }
   };
 
   const handleLoginSiInregistrare = async () => {
@@ -92,17 +136,32 @@ export default function HomeScreen() {
       const data = await response.json();
 
       if (!response.ok || !data.success) {
+        if (response.status === 403 && data.message?.includes("schimbare")) {
+          setStatusMesaj("⏳ Cerere de schimbare dispozitiv trimisă. Așteptați aprobarea HR, apoi reîncercați.");
+          Alert.alert(
+            "Cerere trimisă",
+            "Există deja un dispozitiv înregistrat. HR-ul trebuie să aprobe schimbarea. Reîncercați după aprobare."
+          );
+          return;
+        }
         Alert.alert("Eroare", data.message || "Credențiale incorecte sau dispozitiv blocat.");
         setStatusMesaj("Autentificare eșuată.");
         return;
       }
 
-      setAccessSeedSalvat(data.accessSeed);
+      const seed = data.accessSeed;
+      setAccessSeedSalvat(seed);
       setNumeAngajat(data.user.name);
       setRolAngajat(data.user.role);
+      const start = data.user.accessStartTime?.slice(0, 5) || "??:??";
+      const end = data.user.accessEndTime?.slice(0, 5) || "??:??";
+      setOrarAcces(`${start} - ${end}`);
       setIsAutentificat(true);
       setStatusMesaj("Sesiune activă. Dispozitiv gata.");
-      incarcaDateAuditPlausibile();
+
+      // Încarcă datele pentru celelalte taburi
+      incarcaProfil(seed);
+
       Alert.alert("Succes!", `Bine ai venit, ${data.user.name}!`);
     } catch (error) {
       Alert.alert("Eroare rețea", "Nu s-a putut contacta serverul backend.");
@@ -120,7 +179,7 @@ export default function HomeScreen() {
         const data = await response.json();
         const event = data.data;
 
-        if (!event || event.eventStatus === 'PENDING') return; // mai așteptăm
+        if (!event || event.eventStatus === 'PENDING') return;
 
         stopPolling();
         setIsPending(false);
@@ -132,35 +191,17 @@ export default function HomeScreen() {
             tipActiune === 'ENTRY' ? "✅ Intrare Permisă" : "✅ Ieșire Permisă",
             "Portarul a aprobat accesul. Poarta se deschide."
           );
-          const nouLog: AuditLog = {
-            event_id: eventId,
-            event_type: tipActiune,
-            event_status: "ALLOWED",
-            gate_code: "GATE_MAIN",
-            notes: "Aprobat de portar (în afara orarului)"
-          };
-          setIstoricAudit(prev => [nouLog, ...prev]);
-          setStatisticaPrezență(prev => prev + 1);
         } else {
           setStatusMesaj("❌ Acces refuzat de portar.");
           Alert.alert("❌ Acces Refuzat", "Portarul a refuzat accesul.");
-          const nouLog: AuditLog = {
-            event_id: eventId,
-            event_type: tipActiune,
-            event_status: "DENIED",
-            gate_code: "GATE_MAIN",
-            notes: "Refuzat de portar (în afara orarului)"
-          };
-          setIstoricAudit(prev => [nouLog, ...prev]);
         }
       } catch {
-        // ignorăm erorile de rețea în polling, încercăm din nou
+        // ignorăm erorile de rețea în polling
       }
     };
 
     pollIntervalRef.current = setInterval(poll, PENDING_POLL_INTERVAL);
 
-    // Timeout după 1 minut
     pollTimeoutRef.current = setTimeout(() => {
       stopPolling();
       setIsPending(false);
@@ -192,7 +233,6 @@ export default function HomeScreen() {
 
       const data = await response.json();
 
-      // Acces în afara intervalului orar — așteptăm portarul
       if (data.status === 'PENDING' && data.eventId) {
         startPendingPolling(data.eventId, tipActiune);
         return;
@@ -209,16 +249,6 @@ export default function HomeScreen() {
         tipActiune === 'ENTRY' ? "✅ Intrare Permisă" : "✅ Ieșire Permisă",
         `Bine ai venit, ${data.name || numeAngajat}! Poarta se deschide.`
       );
-
-      const nouLog: AuditLog = {
-        event_id: Date.now(),
-        event_type: tipActiune,
-        event_status: "ALLOWED",
-        gate_code: "GATE_MAIN",
-        notes: `Acces validat prin WiFi (${tipActiune})`
-      };
-      setIstoricAudit(prev => [nouLog, ...prev]);
-      setStatisticaPrezență(prev => prev + 1);
     } catch (error) {
       Alert.alert("Eroare rețea", "Nu s-a putut contacta serverul backend.");
       setStatusMesaj("Eroare de rețea.");
@@ -240,9 +270,11 @@ export default function HomeScreen() {
             setIsAutentificat(false);
             setNumeAngajat("");
             setRolAngajat("");
-            setIstoricAudit([]);
             setIsPending(false);
             setPendingTipActiune(null);
+            setProfil(null);
+            setEvenimentePrezenta([]);
+            setTabActiv('acces');
             setStatusMesaj("Sesiune închisă cu succes. Dispozitiv pregătit.");
           }
         }
@@ -250,6 +282,164 @@ export default function HomeScreen() {
     );
   };
 
+  // ─── TAB: ACCES ───────────────────────────────────────────────────────────
+  const renderTabAcces = () => (
+    <ScrollView style={styles.dashboardContainer} showsVerticalScrollIndicator={false}>
+      <View style={styles.card}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Text style={styles.statusLabel}>Profil Angajat Autentificat</Text>
+          <TouchableOpacity onPress={handleDeconectare}>
+            <Text style={{ color: '#ef4444', fontSize: 12, fontWeight: 'bold' }}>🚪 Deconectare</Text>
+          </TouchableOpacity>
+        </View>
+        <Text style={styles.numeText}>👤 {numeAngajat}</Text>
+        <Text style={styles.detaliuText}>💼 Rol: <Text style={{ fontWeight: '700' }}>{rolAngajat}</Text></Text>
+        <Text style={styles.detaliuText}>⏰ Orar Permis: {orarAcces}</Text>
+      </View>
+
+      {isPending && (
+        <View style={[styles.card, { borderColor: '#d97706', borderWidth: 2, backgroundColor: '#fffbeb' }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <ActivityIndicator size="small" color="#d97706" />
+            <View>
+              <Text style={{ fontWeight: '700', color: '#92400e', fontSize: 15 }}>
+                {pendingTipActiune === 'ENTRY' ? '🟡 Intrare în afara orarului' : '🟡 Ieșire în afara orarului'}
+              </Text>
+              <Text style={{ color: '#b45309', fontSize: 13, marginTop: 4 }}>
+                Aștept răspunsul portarului... (max 1 minut)
+              </Text>
+            </View>
+          </View>
+        </View>
+      )}
+
+      <View style={{ flexDirection: 'row', width: '100%', gap: 10, marginBottom: 12 }}>
+        <TouchableOpacity
+          style={[styles.butonAcces, { flex: 1, opacity: isPending ? 0.5 : 1 }]}
+          onPress={() => handleActionarePoarta('ENTRY')}
+          disabled={isPending}
+        >
+          <Text style={styles.butonText}>🟢 Intrare Poartă</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.butonAcces, { flex: 1, backgroundColor: '#d97706', shadowColor: '#d97706', opacity: isPending ? 0.5 : 1 }]}
+          onPress={() => handleActionarePoarta('EXIT')}
+          disabled={isPending}
+        >
+          <Text style={styles.butonText}>🟠 Ieșire Poartă</Text>
+        </TouchableOpacity>
+      </View>
+      <View style={{ height: 20 }} />
+    </ScrollView>
+  );
+
+  // ─── TAB: DATE PROPRII ────────────────────────────────────────────────────
+  const renderTabProfil = () => (
+    <ScrollView style={styles.dashboardContainer} showsVerticalScrollIndicator={false}>
+      {profilLoading ? (
+        <View style={{ alignItems: 'center', marginTop: 40 }}>
+          <ActivityIndicator size="large" color="#2563eb" />
+          <Text style={{ color: '#6b7280', marginTop: 12 }}>Se încarcă datele...</Text>
+        </View>
+      ) : profil ? (
+        <>
+          <View style={styles.card}>
+            <Text style={styles.statusLabel}>Date Personale</Text>
+            <Text style={styles.numeText}>👤 {profil.numeComplet}</Text>
+            <Text style={styles.detaliuText}>🪪 Legitimație: <Text style={{ fontWeight: '700' }}>{profil.legitimatie}</Text></Text>
+            <Text style={styles.detaliuText}>🏢 Divizie: <Text style={{ fontWeight: '700' }}>{profil.divizie}</Text></Text>
+            <Text style={styles.detaliuText}>⏰ Orar Permis: <Text style={{ fontWeight: '700' }}>{profil.orarPermis}</Text></Text>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.statusLabel}>Colegi din Divizie</Text>
+            {profil.colegi.length === 0 ? (
+              <Text style={styles.detaliuText}>Nu există alți colegi în această divizie.</Text>
+            ) : (
+              profil.colegi.map((coleg, index) => (
+                <Text key={index} style={[styles.detaliuText, { paddingVertical: 3 }]}>
+                  👥 {coleg.name}
+                </Text>
+              ))
+            )}
+          </View>
+
+          <TouchableOpacity
+            style={[styles.butonLogin, { marginTop: 4 }]}
+            onPress={() => accessSeedSalvat && incarcaProfil(accessSeedSalvat)}
+          >
+            <Text style={styles.butonText}>🔄 Reîmprospătează</Text>
+          </TouchableOpacity>
+        </>
+      ) : (
+        <View style={{ alignItems: 'center', marginTop: 40 }}>
+          <Text style={{ color: '#6b7280', marginBottom: 16 }}>Nu s-au putut încărca datele.</Text>
+          <TouchableOpacity
+            style={styles.butonLogin}
+            onPress={() => accessSeedSalvat && incarcaProfil(accessSeedSalvat)}
+          >
+            <Text style={styles.butonText}>Reîncearcă</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+      <View style={{ height: 20 }} />
+    </ScrollView>
+  );
+
+  // ─── TAB: RAPORT PREZENȚĂ ─────────────────────────────────────────────────
+  const renderTabPrezenta = () => (
+    <ScrollView style={styles.dashboardContainer} showsVerticalScrollIndicator={false}>
+      <View style={styles.statsCard}>
+        <Text style={styles.statsLabel}>Prezență Luna Curentă</Text>
+        <Text style={styles.statsNumar}>⚡ {evenimentePrezenta.length} Mișcări înregistrate</Text>
+      </View>
+
+      <TouchableOpacity
+        style={[styles.butonLogin, { marginBottom: 12, opacity: prezentaLoading ? 0.6 : 1 }]}
+        onPress={() => accessSeedSalvat && incarcaPrezenta(accessSeedSalvat)}
+        disabled={prezentaLoading}
+      >
+        {prezentaLoading
+          ? <ActivityIndicator color="#fff" />
+          : <Text style={styles.butonText}>🔄 Vezi prezența mea pe luna curentă</Text>
+        }
+      </TouchableOpacity>
+
+      <Text style={styles.sectiuneTitlu}>📋 Istoric Intrări / Ieșiri</Text>
+
+      {evenimentePrezenta.length === 0 && !prezentaLoading && (
+        <Text style={{ color: '#9ca3af', fontSize: 13, textAlign: 'center', marginTop: 20 }}>
+          Apasă butonul de mai sus pentru a încărca istoricul.
+        </Text>
+      )}
+
+      {evenimentePrezenta.map((log) => (
+        <View key={log.event_id} style={styles.logCard}>
+          <View style={styles.logHeader}>
+            <Text style={[styles.badge, log.event_type === 'ENTRY' ? styles.badgeIntrare : styles.badgeIesire]}>
+              {log.event_type === 'ENTRY' ? 'INTRARE' : 'IEȘIRE'}
+            </Text>
+            <Text style={[styles.badge, {
+              backgroundColor: log.event_status === 'ALLOWED' ? '#dcfce7' : log.event_status === 'DENIED' ? '#fee2e2' : '#fef3c7',
+              color: log.event_status === 'ALLOWED' ? '#15803d' : log.event_status === 'DENIED' ? '#b91c1c' : '#b45309',
+            }]}>
+              {log.event_status}
+            </Text>
+            <Text style={styles.gateText}>🚪 {log.gate_code}</Text>
+          </View>
+          {log.event_time && (
+            <Text style={{ fontSize: 11, color: '#9ca3af', marginBottom: 3 }}>
+              🕐 {new Date(log.event_time).toLocaleString('ro-RO')}
+            </Text>
+          )}
+          <Text style={styles.notesText}>{log.notes}</Text>
+        </View>
+      ))}
+      <View style={{ height: 20 }} />
+    </ScrollView>
+  );
+
+  // ─── RENDER PRINCIPAL ─────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
       <Text style={styles.titlu}>ParkSecured MobileID</Text>
@@ -265,79 +455,44 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
       ) : (
-        <ScrollView style={styles.dashboardContainer} showsVerticalScrollIndicator={false}>
-          <View style={styles.card}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={styles.statusLabel}>Profil Angajat Autentificat</Text>
-              <TouchableOpacity onPress={handleDeconectare}>
-                <Text style={{ color: '#ef4444', fontSize: 12, fontWeight: 'bold' }}>🚪 Deconectare</Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.numeText}>👤 {numeAngajat}</Text>
-            <Text style={styles.detaliuText}>💼 Rol: <Text style={{ fontWeight: '700' }}>{rolAngajat}</Text></Text>
-            <Text style={styles.detaliuText}>⏰ Orar Permis: {orarAcces}</Text>
-          </View>
-
-          {isPending && (
-            <View style={[styles.card, { borderColor: '#d97706', borderWidth: 2, backgroundColor: '#fffbeb' }]}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                <ActivityIndicator size="small" color="#d97706" />
-                <View>
-                  <Text style={{ fontWeight: '700', color: '#92400e', fontSize: 15 }}>
-                    {pendingTipActiune === 'ENTRY' ? '🟡 Intrare în afara orarului' : '🟡 Ieșire în afara orarului'}
-                  </Text>
-                  <Text style={{ color: '#b45309', fontSize: 13, marginTop: 4 }}>
-                    Aștept răspunsul portarului... (max 1 minut)
-                  </Text>
-                </View>
-              </View>
-            </View>
-          )}
-
-          <View style={styles.statsCard}>
-            <Text style={styles.statsLabel}>Statistica Prezență (Luna Curentă)</Text>
-            <Text style={styles.statsNumar}>⚡ {statisticaPrezență} Mișcări înregistrate</Text>
-          </View>
-
-          <Text style={styles.sectiuneTitlu}>📋 Istoric Prezență & Audit (Personal)</Text>
-          {istoricAudit.map((log) => (
-            <View key={log.event_id} style={styles.logCard}>
-              <View style={styles.logHeader}>
-                <Text style={[styles.badge, log.event_type === 'ENTRY' ? styles.badgeIntrare : styles.badgeIesire]}>
-                  {log.event_type === 'ENTRY' ? 'INTRARE (ENTRY)' : 'IEȘIRE (EXIT)'}
+        <>
+          {/* Tab Bar */}
+          <View style={{
+            flexDirection: 'row', width: '100%', backgroundColor: '#fff',
+            borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: '#e5e7eb', overflow: 'hidden'
+          }}>
+            {([
+              { key: 'acces', label: '🔑 Acces' },
+              { key: 'profil', label: '👤 Date Proprii' },
+              { key: 'prezenta', label: '📋 Prezență' },
+            ] as const).map((tab) => (
+              <TouchableOpacity
+                key={tab.key}
+                style={{
+                  flex: 1, paddingVertical: 10, alignItems: 'center',
+                  backgroundColor: tabActiv === tab.key ? '#2563eb' : '#fff',
+                }}
+                onPress={() => setTabActiv(tab.key)}
+              >
+                <Text style={{
+                  fontSize: 11, fontWeight: '700',
+                  color: tabActiv === tab.key ? '#fff' : '#6b7280'
+                }}>
+                  {tab.label}
                 </Text>
-                <Text style={styles.gateText}>🚪 {log.gate_code}</Text>
-              </View>
-              <Text style={styles.notesText}>{log.notes}</Text>
-            </View>
-          ))}
-          <View style={{ height: 20 }} />
-        </ScrollView>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {tabActiv === 'acces' && renderTabAcces()}
+          {tabActiv === 'profil' && renderTabProfil()}
+          {tabActiv === 'prezenta' && renderTabPrezenta()}
+        </>
       )}
 
       <View style={styles.statusCard}>
         <Text style={styles.statusText}>ℹ️ Status: {statusMesaj}</Text>
       </View>
-
-      {isAutentificat && (
-        <View style={{ flexDirection: 'row', width: '100%', gap: 10 }}>
-          <TouchableOpacity
-            style={[styles.butonAcces, { flex: 1, opacity: isPending ? 0.5 : 1 }]}
-            onPress={() => handleActionarePoarta('ENTRY')}
-            disabled={isPending}
-          >
-            <Text style={styles.butonText}>🟢 Intrare Poartă</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.butonAcces, { flex: 1, backgroundColor: '#d97706', shadowColor: '#d97706', opacity: isPending ? 0.5 : 1 }]}
-            onPress={() => handleActionarePoarta('EXIT')}
-            disabled={isPending}
-          >
-            <Text style={styles.butonText}>🟠 Ieșire Poartă</Text>
-          </TouchableOpacity>
-        </View>
-      )}
 
       {!isAutentificat && (
         <TouchableOpacity style={[styles.butonAcces, styles.butonDezactivat]} disabled={true}>
