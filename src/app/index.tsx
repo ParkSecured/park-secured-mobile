@@ -1,7 +1,7 @@
 import * as Application from 'expo-application';
 import { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Alert, Platform, ScrollView,
+  ActivityIndicator, Alert, Modal, Platform, ScrollView,
   Text, TextInput, TouchableOpacity, View
 } from 'react-native';
 
@@ -42,8 +42,13 @@ export default function HomeScreen() {
   const [isPending, setIsPending] = useState(false);
   const [pendingTipActiune, setPendingTipActiune] = useState<'ENTRY' | 'EXIT' | null>(null);
 
-  // Tab activ: 'acces' | 'profil' | 'prezenta'
   const [tabActiv, setTabActiv] = useState<'acces' | 'profil' | 'prezenta'>('acces');
+
+  // Schimbare parolă la prima logare
+  const [trebuieSchimbareParola, setTrebuieSchimbareParola] = useState(false);
+  const [parolaNoua, setParolaNoua] = useState('');
+  const [parolaConfirm, setParolaConfirm] = useState('');
+  const [schimbareLoading, setSchimbareLoading] = useState(false);
 
   // Tab Profil
   const [profil, setProfil] = useState<Profil | null>(null);
@@ -92,10 +97,21 @@ export default function HomeScreen() {
   const incarcaProfil = async (seed: string) => {
     setProfilLoading(true);
     try {
-      const response = await fetch(`${BACKEND_URL}/api/mobile/profile?accessSeed=${seed}`);
+      const response = await fetch(`${CLOUD_URL}/mobile/me`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accessSeed: seed })
+      });
       const data = await response.json();
-      if (data.success) {
-        setProfil(data.data);
+      if (data.success && data.data) {
+        const { employee } = data.data;
+        setProfil({
+          numeComplet: `${employee.firstName} ${employee.lastName}`,
+          legitimatie: employee.badgeCode || '-',
+          orarPermis: `${String(employee.accessStartTime).slice(0,5)} - ${String(employee.accessEndTime).slice(0,5)}`,
+          divizie: employee.divisionName || '-',
+          colegi: (employee.colleagues || []).map((c: { name: string }) => ({ name: c.name }))
+        });
       }
     } catch {
       // ignorăm, utilizatorul poate reîncerca
@@ -107,10 +123,22 @@ export default function HomeScreen() {
   const incarcaPrezenta = async (seed: string) => {
     setPrezentaLoading(true);
     try {
-      const response = await fetch(`${BACKEND_URL}/api/mobile/my-events?accessSeed=${seed}`);
+      const response = await fetch(`${CLOUD_URL}/mobile/monthly-report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accessSeed: seed })
+      });
       const data = await response.json();
-      if (data.success) {
-        setEvenimentePrezenta(data.data);
+      if (data.success && data.data) {
+        const events = data.data.events.map((e: any) => ({
+          event_id: e.eventId,
+          event_type: e.eventType,
+          event_status: e.eventStatus,
+          event_time: e.eventTime,
+          gate_code: e.gateCode,
+          notes: e.notes
+        }));
+        setEvenimentePrezenta(events);
       }
     } catch {
       // ignorăm
@@ -162,7 +190,11 @@ export default function HomeScreen() {
       // Încarcă datele pentru celelalte taburi
       incarcaProfil(seed);
 
-      Alert.alert("Succes!", `Bine ai venit, ${data.user.name}!`);
+      if (data.mustChangePassword) {
+        setTrebuieSchimbareParola(true);
+      } else {
+        Alert.alert("Succes!", `Bine ai venit, ${data.user.name}!`);
+      }
     } catch (error) {
       Alert.alert("Eroare rețea", "Nu s-a putut contacta serverul backend.");
     }
@@ -280,6 +312,45 @@ export default function HomeScreen() {
         }
       ]
     );
+  };
+
+  const handleSchimbareParola = async () => {
+    if (!parolaNoua || !parolaConfirm) {
+      Alert.alert("Eroare", "Completează ambele câmpuri.");
+      return;
+    }
+    if (parolaNoua.length < 8) {
+      Alert.alert("Eroare", "Parola trebuie să aibă minim 8 caractere.");
+      return;
+    }
+    if (parolaNoua !== parolaConfirm) {
+      Alert.alert("Eroare", "Parolele nu coincid.");
+      return;
+    }
+
+    setSchimbareLoading(true);
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/mobile/change-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, currentPassword: parola, newPassword: parolaNoua })
+      });
+      const data = await response.json();
+
+      if (!data.success) {
+        Alert.alert("Eroare", data.message || "Nu s-a putut schimba parola.");
+        return;
+      }
+
+      setTrebuieSchimbareParola(false);
+      setParolaNoua('');
+      setParolaConfirm('');
+      Alert.alert("✅ Parolă schimbată", `Bine ai venit, ${numeAngajat}! Parola a fost actualizată.`);
+    } catch {
+      Alert.alert("Eroare rețea", "Nu s-a putut contacta serverul.");
+    } finally {
+      setSchimbareLoading(false);
+    }
   };
 
   // ─── TAB: ACCES ───────────────────────────────────────────────────────────
@@ -489,6 +560,48 @@ export default function HomeScreen() {
           {tabActiv === 'prezenta' && renderTabPrezenta()}
         </>
       )}
+
+      <Modal visible={trebuieSchimbareParola} transparent animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 28, width: '100%', maxWidth: 380 }}>
+            <Text style={{ fontSize: 22, fontWeight: '800', color: '#1e293b', marginBottom: 6 }}>🔐 Schimbă parola</Text>
+            <Text style={{ fontSize: 14, color: '#64748b', marginBottom: 20, lineHeight: 20 }}>
+              Acesta este primul tău login. Trebuie să îți setezi o parolă personală înainte de a continua.
+            </Text>
+
+            <Text style={{ fontSize: 12, fontWeight: '600', color: '#374151', marginBottom: 4 }}>Parolă nouă</Text>
+            <TextInput
+              style={[styles.input, { marginBottom: 12 }]}
+              value={parolaNoua}
+              onChangeText={setParolaNoua}
+              placeholder="Minim 8 caractere"
+              secureTextEntry
+              autoCapitalize="none"
+            />
+
+            <Text style={{ fontSize: 12, fontWeight: '600', color: '#374151', marginBottom: 4 }}>Confirmă parola</Text>
+            <TextInput
+              style={[styles.input, { marginBottom: 20 }]}
+              value={parolaConfirm}
+              onChangeText={setParolaConfirm}
+              placeholder="Repetă parola nouă"
+              secureTextEntry
+              autoCapitalize="none"
+            />
+
+            <TouchableOpacity
+              style={[styles.butonLogin, { opacity: schimbareLoading ? 0.6 : 1 }]}
+              onPress={handleSchimbareParola}
+              disabled={schimbareLoading}
+            >
+              {schimbareLoading
+                ? <ActivityIndicator color="#fff" />
+                : <Text style={styles.butonText}>Setează parola și continuă</Text>
+              }
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       <View style={styles.statusCard}>
         <Text style={styles.statusText}>ℹ️ Status: {statusMesaj}</Text>
