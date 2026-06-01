@@ -27,6 +27,7 @@ interface Profil {
   orarPermis: string;
   divizie: string;
   colegi: { name: string }[];
+  acordatDe: string;
 }
 
 export default function HomeScreen() {
@@ -110,7 +111,8 @@ export default function HomeScreen() {
           legitimatie: employee.badgeCode || '-',
           orarPermis: `${String(employee.accessStartTime).slice(0,5)} - ${String(employee.accessEndTime).slice(0,5)}`,
           divizie: employee.divisionName || '-',
-          colegi: (employee.colleagues || []).map((c: { name: string }) => ({ name: c.name }))
+          colegi: (employee.colleagues || []).map((c: { name: string }) => ({ name: c.name })),
+          acordatDe: employee.grantedByName || employee.grantedByEmail || '-'
         });
       }
     } catch {
@@ -420,6 +422,7 @@ export default function HomeScreen() {
             <Text style={styles.detaliuText}>🪪 Legitimație: <Text style={{ fontWeight: '700' }}>{profil.legitimatie}</Text></Text>
             <Text style={styles.detaliuText}>🏢 Divizie: <Text style={{ fontWeight: '700' }}>{profil.divizie}</Text></Text>
             <Text style={styles.detaliuText}>⏰ Orar Permis: <Text style={{ fontWeight: '700' }}>{profil.orarPermis}</Text></Text>
+            <Text style={styles.detaliuText}>✅ Acces acordat de: <Text style={{ fontWeight: '700' }}>{profil.acordatDe}</Text></Text>
           </View>
 
           <View style={styles.card}>
