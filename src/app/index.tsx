@@ -7,15 +7,16 @@ import {
 } from 'react-native';
 
 import { styles } from './styles';
-import { BleManager } from 'react-native-ble-plx';
 
 
-const bleManager = new BleManager();
+const BleManagerCtor = Platform.OS === 'web' ? null : require('react-native-ble-plx').BleManager;
+const bleManager = BleManagerCtor ? new BleManagerCtor() : null;
 const PARKSECURED_SERVICE_UUID = '0000ABCD-0000-1000-8000-00805F9B34FB';
 const PARKSECURED_CHAR_UUID = '00001234-0000-1000-8000-00805F9B34FB';
 
-const BACKEND_URL = Constants.expoConfig?.extra?.backendUrl ?? 'https://park-secured-backend.onrender.com';
-const CLOUD_URL = Constants.expoConfig?.extra?.cloudUrl ?? 'https://park-secured-cloud-r62j.onrender.com/api';
+const CLOUD_URL = process.env.EXPO_PUBLIC_CLOUD_URL
+  ?? Constants.expoConfig?.extra?.cloudUrl
+  ?? 'https://park-secured-cloud-r62j.onrender.com/api';
 const PENDING_POLL_INTERVAL = 1000;
 const PENDING_TIMEOUT = 60000;
 
@@ -100,10 +101,15 @@ export default function HomeScreen() {
 
   const trimiteBluetoothCode = async (bluetoothCode: string): Promise<void> => {
     return new Promise((resolve, reject) => {
+      if (!bleManager) {
+        reject(new Error('Bluetooth indisponibil pe web'));
+        return;
+      }
+
       bleManager.startDeviceScan(
         [PARKSECURED_SERVICE_UUID],
         null,
-        async (error, device) => {
+        async (error: any, device: any) => {
           if (error) {
             reject(error);
             return;
@@ -233,7 +239,7 @@ export default function HomeScreen() {
 
     try {
       setStatusMesaj("Se verifică credențialele în Cloud...");
-      const response = await fetch(`${BACKEND_URL}/api/mobile/login-secure`, {
+      const response = await fetch(`${CLOUD_URL}/mobile/login-secure`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password: parola, platform: Platform.OS, deviceIdentifier: deviceUuid })
@@ -405,7 +411,7 @@ export default function HomeScreen() {
       }
 
       // ── Fallback: HTTP ────────────────────────────────────────────────────
-      const response = await fetch(`${BACKEND_URL}/api/validate-access`, {
+      const response = await fetch(`${CLOUD_URL}/validate-access`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ accessSeed: accessSeedSalvat, direction: tipActiune, accessMethod: modAcces })
@@ -480,7 +486,7 @@ export default function HomeScreen() {
 
     setSchimbareLoading(true);
     try {
-      const response = await fetch(`${BACKEND_URL}/api/mobile/change-password`, {
+      const response = await fetch(`${CLOUD_URL}/mobile/change-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, currentPassword: parola, newPassword: parolaNoua })
