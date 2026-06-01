@@ -44,6 +44,7 @@ export default function HomeScreen() {
   const [orarAcces, setOrarAcces] = useState("Se încarcă...");
   const [isPending, setIsPending] = useState(false);
   const [pendingTipActiune, setPendingTipActiune] = useState<'ENTRY' | 'EXIT' | null>(null);
+  const [ultimAprobatDe, setUltimAprobatDe] = useState<string | null>(null);
 
   const [tabActiv, setTabActiv] = useState<'acces' | 'profil' | 'prezenta'>('acces');
 
@@ -223,12 +224,15 @@ export default function HomeScreen() {
         setPendingTipActiune(null);
 
         if (event.eventStatus === 'ALLOWED') {
-          setStatusMesaj(`✅ ${tipActiune === 'ENTRY' ? 'Intrare' : 'Ieșire'} aprobată de portar.`);
+          const numePortar = event.resolvedByName ? ` de ${event.resolvedByName}` : '';
+          setUltimAprobatDe(event.resolvedByName || null);
+          setStatusMesaj(`✅ ${tipActiune === 'ENTRY' ? 'Intrare' : 'Ieșire'} aprobată${numePortar}.`);
           Alert.alert(
             tipActiune === 'ENTRY' ? "✅ Intrare Permisă" : "✅ Ieșire Permisă",
-            "Portarul a aprobat accesul. Poarta se deschide."
+            `Portarul${numePortar} a aprobat accesul. Poarta se deschide.`
           );
         } else {
+          setUltimAprobatDe(null);
           setStatusMesaj("❌ Acces refuzat de portar.");
           Alert.alert("❌ Acces Refuzat", "Portarul a refuzat accesul.");
         }
@@ -372,6 +376,14 @@ export default function HomeScreen() {
         <Text style={styles.detaliuText}>💼 Rol: <Text style={{ fontWeight: '700' }}>{rolAngajat}</Text></Text>
         <Text style={styles.detaliuText}>⏰ Orar Permis: {orarAcces}</Text>
       </View>
+
+      {ultimAprobatDe && (
+        <View style={[styles.card, { borderColor: '#16a34a', borderWidth: 1, backgroundColor: '#f0fdf4' }]}>
+          <Text style={{ color: '#166534', fontSize: 13, fontWeight: '600' }}>
+            ✅ Ultima intrare aprobată de: <Text style={{ fontWeight: '700' }}>{ultimAprobatDe}</Text>
+          </Text>
+        </View>
+      )}
 
       {isPending && (
         <View style={[styles.card, { borderColor: '#d97706', borderWidth: 2, backgroundColor: '#fffbeb' }]}>
