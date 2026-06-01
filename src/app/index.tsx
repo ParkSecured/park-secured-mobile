@@ -16,7 +16,7 @@ const PARKSECURED_CHAR_UUID = '00001234-0000-1000-8000-00805F9B34FB';
 
 const BACKEND_URL = Constants.expoConfig?.extra?.backendUrl ?? 'https://park-secured-backend.onrender.com';
 const CLOUD_URL = Constants.expoConfig?.extra?.cloudUrl ?? 'https://park-secured-cloud-r62j.onrender.com/api';
-const PENDING_POLL_INTERVAL = 3000;
+const PENDING_POLL_INTERVAL = 1000;
 const PENDING_TIMEOUT = 60000;
 
 interface AuditLog {
@@ -36,6 +36,8 @@ interface Profil {
   colegi: { name: string }[];
   acordatDe: string;
   codBluetooth: string;
+  accessStartTime: string | null;
+  accessEndTime: string | null;
 }
 
 export default function HomeScreen() {
@@ -48,11 +50,13 @@ export default function HomeScreen() {
   const [numeAngajat, setNumeAngajat] = useState("");
   const [rolAngajat, setRolAngajat] = useState("");
   const [orarAcces, setOrarAcces] = useState("Se încarcă...");
+  const [orarAngajat, setOrarAngajat] = useState<{ start: string | null; end: string | null }>({ start: null, end: null });
   const [isPending, setIsPending] = useState(false);
   const [pendingTipActiune, setPendingTipActiune] = useState<'ENTRY' | 'EXIT' | null>(null);
   const [ultimAprobatDe, setUltimAprobatDe] = useState<string | null>(null);
 
   const [tabActiv, setTabActiv] = useState<'acces' | 'profil' | 'prezenta'>('acces');
+  const [modAcces, setModAcces] = useState<'pieton' | 'masina'>('pieton');
 
   // Schimbare parolă la prima logare
   const [trebuieSchimbareParola, setTrebuieSchimbareParola] = useState(false);
@@ -76,6 +80,22 @@ export default function HomeScreen() {
     if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
     pollIntervalRef.current = null;
     pollTimeoutRef.current = null;
+  };
+
+  const esteInAfaraOrarului = (): boolean => {
+    const startRaw = orarAngajat.start ?? profil?.accessStartTime;
+    const endRaw = orarAngajat.end ?? profil?.accessEndTime;
+    if (!startRaw || !endRaw) return false;
+    const toSec = (t: string) => {
+      const [h, m, s = '0'] = String(t).split(':');
+      return Number(h) * 3600 + Number(m) * 60 + Number(s);
+    };
+    const now = new Date();
+    const cur = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+    const start = toSec(startRaw);
+    const end = toSec(endRaw);
+    if (start <= end) return cur < start || cur > end;
+    return cur < start && cur > end; // interval peste miezul nopții
   };
 
   const trimiteBluetoothCode = async (bluetoothCode: string): Promise<void> => {
@@ -166,7 +186,9 @@ export default function HomeScreen() {
           divizie: employee.divisionName || '-',
           colegi: (employee.colleagues || []).map((c: { name: string }) => ({ name: c.name })),
           acordatDe: employee.grantedByName || employee.grantedByEmail || '-',
-          codBluetooth: employee.bluetoothCode || '-'
+          codBluetooth: employee.bluetoothCode || '-',
+          accessStartTime: employee.accessStartTime || null,
+          accessEndTime: employee.accessEndTime || null,
         });
       }
     } catch {
@@ -240,6 +262,7 @@ export default function HomeScreen() {
       const start = data.user.accessStartTime?.slice(0, 5) || "??:??";
       const end = data.user.accessEndTime?.slice(0, 5) || "??:??";
       setOrarAcces(`${start} - ${end}`);
+      setOrarAngajat({ start: data.user.accessStartTime || null, end: data.user.accessEndTime || null });
       setIsAutentificat(true);
       setStatusMesaj("Sesiune activă. Dispozitiv gata.");
 
@@ -385,12 +408,14 @@ export default function HomeScreen() {
       const response = await fetch(`${BACKEND_URL}/api/validate-access`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accessSeed: accessSeedSalvat, direction: tipActiune })
+        body: JSON.stringify({ accessSeed: accessSeedSalvat, direction: tipActiune, accessMethod: modAcces })
       });
 
       const data = await response.json();
 
       if (data.status === 'PENDING' && data.eventId) {
+        setIsPending(true);
+        setPendingTipActiune(tipActiune);
         startPendingPolling(data.eventId, tipActiune);
         return;
       }
@@ -516,6 +541,48 @@ export default function HomeScreen() {
           </View>
         </View>
       )}
+
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 14, gap: 0 }}>
+        <TouchableOpacity
+          onPress={() => setModAcces('pieton')}
+          style={{
+            flex: 1,
+            paddingVertical: 10,
+            borderRadius: 10,
+            borderTopRightRadius: 0,
+            borderBottomRightRadius: 0,
+            backgroundColor: modAcces === 'pieton' ? '#2563eb' : '#f1f5f9',
+            alignItems: 'center',
+            borderWidth: 1.5,
+            borderColor: modAcces === 'pieton' ? '#2563eb' : '#cbd5e1',
+          }}
+        >
+          <Text style={{ fontSize: 20 }}>🚶</Text>
+          <Text style={{ fontSize: 12, fontWeight: '700', color: modAcces === 'pieton' ? '#fff' : '#64748b', marginTop: 2 }}>
+            Pieton
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => setModAcces('masina')}
+          style={{
+            flex: 1,
+            paddingVertical: 10,
+            borderRadius: 10,
+            borderTopLeftRadius: 0,
+            borderBottomLeftRadius: 0,
+            backgroundColor: modAcces === 'masina' ? '#2563eb' : '#f1f5f9',
+            alignItems: 'center',
+            borderWidth: 1.5,
+            borderLeftWidth: 0,
+            borderColor: modAcces === 'masina' ? '#2563eb' : '#cbd5e1',
+          }}
+        >
+          <Text style={{ fontSize: 20 }}>🚗</Text>
+          <Text style={{ fontSize: 12, fontWeight: '700', color: modAcces === 'masina' ? '#fff' : '#64748b', marginTop: 2 }}>
+            Mașină
+          </Text>
+        </TouchableOpacity>
+      </View>
 
       <View style={{ flexDirection: 'row', width: '100%', gap: 10, marginBottom: 12 }}>
         <TouchableOpacity
