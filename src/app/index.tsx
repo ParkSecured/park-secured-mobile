@@ -3,10 +3,16 @@ import Constants from 'expo-constants';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator, Alert, Modal, Platform, ScrollView,
-  Text, TextInput, TouchableOpacity, View
+  Text, TextInput, TouchableOpacity, View, PermissionsAndroid
 } from 'react-native';
 
 import { styles } from './styles';
+import { BleManager } from 'react-native-ble-plx';
+
+
+const bleManager = new BleManager();
+const PARKSECURED_SERVICE_UUID = '0000ABCD-0000-1000-8000-00805F9B34FB';
+const PARKSECURED_CHAR_UUID = '00001234-0000-1000-8000-00805F9B34FB';
 
 const BACKEND_URL = Constants.expoConfig?.extra?.backendUrl ?? 'https://park-secured-backend.onrender.com';
 const CLOUD_URL = Constants.expoConfig?.extra?.cloudUrl ?? 'https://park-secured-cloud-r62j.onrender.com/api';
@@ -72,6 +78,43 @@ export default function HomeScreen() {
     pollTimeoutRef.current = null;
   };
 
+  const trimiteBluetoothCode = async (bluetoothCode: string): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      bleManager.startDeviceScan(
+        [PARKSECURED_SERVICE_UUID],
+        null,
+        async (error, device) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          if (!device) return;
+
+          try {
+            bleManager.stopDeviceScan();
+            const connected = await device.connect();
+            await connected.discoverAllServicesAndCharacteristics();
+            await connected.writeCharacteristicWithResponseForService(
+              PARKSECURED_SERVICE_UUID,
+              PARKSECURED_CHAR_UUID,
+              btoa(bluetoothCode)
+            );
+            await connected.cancelConnection();
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        }
+      );
+
+      setTimeout(() => {
+        bleManager.stopDeviceScan();
+        reject(new Error('Timeout: laptopul nu a fost găsit'));
+      }, 10000);
+    });
+  };
+
+
   useEffect(() => {
     return () => stopPolling();
   }, []);
@@ -79,6 +122,13 @@ export default function HomeScreen() {
   useEffect(() => {
     async function obtineIdHardware() {
       try {
+        if (Platform.OS === 'android') {
+          await PermissionsAndroid.requestMultiple([
+            PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+            PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+            PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE,
+          ]);
+        }
         let idUnic = "";
         if (Platform.OS === 'android') {
           idUnic = Application.getAndroidId() || `android-fallback-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -224,7 +274,7 @@ export default function HomeScreen() {
         setPendingTipActiune(null);
 
         if (event.eventStatus === 'ALLOWED') {
-          const numePortar = event.resolvedByName ? ` de ${event.resolvedByName}` : '';
+          const numePortar = event.resolvedByName ? ` ${event.resolvedByName}` : '';
           setUltimAprobatDe(event.resolvedByName || null);
           setStatusMesaj(`✅ ${tipActiune === 'ENTRY' ? 'Intrare' : 'Ieșire'} aprobată${numePortar}.`);
           Alert.alert(
@@ -264,8 +314,63 @@ export default function HomeScreen() {
     }
 
     try {
-      setStatusMesaj(`Se trimite cerere de ${tipActiune === 'ENTRY' ? 'intrare' : 'ieșire'} către server...`);
+      setStatusMesaj(`Se trimite cerere de ${tipActiune === 'ENTRY' ? 'intrare' : 'ieșire'}...`);
 
+      // ── Canal principal: BLE ──────────────────────────────────────────────
+      // Dacă BLE reușește, NU mai facem request HTTP — poarta validează direct
+      // prin cloud. HTTP devine fallback doar când BLE nu e disponibil.
+      if (profil?.codBluetooth && profil.codBluetooth !== '-') {
+        try {
+          setStatusMesaj('📡 Se trimite codul Bluetooth către poartă...');
+          await trimiteBluetoothCode(profil.codBluetooth);
+          setStatusMesaj('✅ Cod Bluetooth trimis. Aștept răspuns...');
+          // BLE reușit — pornim polling pe ultimul eveniment bluetooth al angajatului
+          setIsPending(true);
+          setPendingTipActiune(tipActiune);
+          const pollBle = async () => {
+            try {
+              const r = await fetch(`${CLOUD_URL}/mobile/latest-event`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ accessSeed: accessSeedSalvat })
+              });
+              const d = await r.json();
+              const ev = d.data;
+              if (!ev || ev.eventStatus === 'PENDING') return;
+              stopPolling();
+              setIsPending(false);
+              setPendingTipActiune(null);
+              if (ev.eventStatus === 'ALLOWED') {
+                const numePortar = ev.resolvedByName ? ` de ${ev.resolvedByName}` : '';
+                setUltimAprobatDe(ev.resolvedByName || null);
+                setStatusMesaj(`✅ ${tipActiune === 'ENTRY' ? 'Intrare' : 'Ieșire'} aprobată${numePortar}.`);
+                Alert.alert(
+                  tipActiune === 'ENTRY' ? '✅ Intrare Permisă' : '✅ Ieșire Permisă',
+                  `Acces aprobat${numePortar}. Poarta se deschide.`
+                );
+              } else {
+                setUltimAprobatDe(null);
+                setStatusMesaj('❌ Acces refuzat.');
+                Alert.alert('❌ Acces Refuzat', 'Accesul a fost refuzat.');
+              }
+            } catch { /* ignorăm erorile de rețea în polling */ }
+          };
+          pollIntervalRef.current = setInterval(pollBle, PENDING_POLL_INTERVAL);
+          pollTimeoutRef.current = setTimeout(() => {
+            stopPolling();
+            setIsPending(false);
+            setPendingTipActiune(null);
+            setStatusMesaj('⏱️ Timp expirat.');
+            Alert.alert('Timp expirat', 'Poarta nu a răspuns în timp util. Accesul a fost refuzat automat.');
+          }, PENDING_TIMEOUT);
+          return; // BLE reușit — nu mai facem HTTP
+        } catch {
+          // BLE a eșuat (poarta nu e în rază) — fallback la HTTP
+          setStatusMesaj('📶 Bluetooth indisponibil. Se încearcă prin internet...');
+        }
+      }
+
+      // ── Fallback: HTTP ────────────────────────────────────────────────────
       const response = await fetch(`${BACKEND_URL}/api/validate-access`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

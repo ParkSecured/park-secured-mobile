@@ -37,7 +37,15 @@
         }
       ],
       "expo-font",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": ["peripheral"],
+          "bluetoothAlwaysPermission": "Aplicația folosește Bluetooth pentru acces la poartă"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
