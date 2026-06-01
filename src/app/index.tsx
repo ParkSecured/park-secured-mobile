@@ -314,19 +314,20 @@ export default function HomeScreen() {
     }
 
     try {
-      setStatusMesaj(`Se trimite cerere de ${tipActiune === 'ENTRY' ? 'intrare' : 'ieșire'}...`);
+      setStatusMesaj(`Se trimite cerere de ${tipActiune === 'ENTRY' ? 'intrare' : 'ieșire'} către server...`);
 
       // ── Canal principal: BLE ──────────────────────────────────────────────
-      // Dacă BLE reușește, NU mai facem request HTTP — poarta validează direct
-      // prin cloud. HTTP devine fallback doar când BLE nu e disponibil.
+      // Dacă BLE reușește, NU mai facem request HTTP.
+      // HTTP devine fallback doar când BLE nu e disponibil.
       if (profil?.codBluetooth && profil.codBluetooth !== '-') {
         try {
           setStatusMesaj('📡 Se trimite codul Bluetooth către poartă...');
+          const bleStartTime = new Date(); // salvăm momentul trimiterii
           await trimiteBluetoothCode(profil.codBluetooth);
           setStatusMesaj('✅ Cod Bluetooth trimis. Aștept răspuns...');
-          // BLE reușit — pornim polling pe ultimul eveniment bluetooth al angajatului
-          setIsPending(true);
-          setPendingTipActiune(tipActiune);
+          // BLE reușit — polling pe ultimul eveniment creat după momentul trimiterii
+          // Nu setăm isPending=true imediat — o facem doar dacă primul poll găsește PENDING
+          // (adică e în afara intervalului orar și portarul trebuie să decidă)
           const pollBle = async () => {
             try {
               const r = await fetch(`${CLOUD_URL}/mobile/latest-event`, {
@@ -336,7 +337,17 @@ export default function HomeScreen() {
               });
               const d = await r.json();
               const ev = d.data;
-              if (!ev || ev.eventStatus === 'PENDING') return;
+              // Ignoră evenimente mai vechi decât momentul trimiterii BLE
+              if (!ev) return;
+              if (ev.eventTime && new Date(ev.eventTime) < bleStartTime) return;
+              // Dacă e PENDING — arată bannerul de așteptare
+              if (ev.eventStatus === 'PENDING') {
+                if (!isPending) {
+                  setIsPending(true);
+                  setPendingTipActiune(tipActiune);
+                }
+                return;
+              }
               stopPolling();
               setIsPending(false);
               setPendingTipActiune(null);
@@ -365,7 +376,7 @@ export default function HomeScreen() {
           }, PENDING_TIMEOUT);
           return; // BLE reușit — nu mai facem HTTP
         } catch {
-          // BLE a eșuat (poarta nu e în rază) — fallback la HTTP
+          // BLE a eșuat — fallback la HTTP
           setStatusMesaj('📶 Bluetooth indisponibil. Se încearcă prin internet...');
         }
       }
