@@ -1,4 +1,5 @@
 import * as Application from 'expo-application';
+import Constants from 'expo-constants';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator, Alert, Modal, Platform, ScrollView,
@@ -7,8 +8,8 @@ import {
 
 import { styles } from './styles';
 
-const BACKEND_URL = 'https://park-secured-backend.onrender.com';
-const CLOUD_URL = 'https://park-secured-cloud-r62j.onrender.com/api';
+const BACKEND_URL = Constants.expoConfig?.extra?.backendUrl ?? 'https://park-secured-backend.onrender.com';
+const CLOUD_URL = Constants.expoConfig?.extra?.cloudUrl ?? 'https://park-secured-cloud-r62j.onrender.com/api';
 const PENDING_POLL_INTERVAL = 3000;
 const PENDING_TIMEOUT = 60000;
 
@@ -28,6 +29,7 @@ interface Profil {
   divizie: string;
   colegi: { name: string }[];
   acordatDe: string;
+  codBluetooth: string;
 }
 
 export default function HomeScreen() {
@@ -112,7 +114,8 @@ export default function HomeScreen() {
           orarPermis: `${String(employee.accessStartTime).slice(0,5)} - ${String(employee.accessEndTime).slice(0,5)}`,
           divizie: employee.divisionName || '-',
           colegi: (employee.colleagues || []).map((c: { name: string }) => ({ name: c.name })),
-          acordatDe: employee.grantedByName || employee.grantedByEmail || '-'
+          acordatDe: employee.grantedByName || employee.grantedByEmail || '-',
+          codBluetooth: employee.bluetoothCode || '-'
         });
       }
     } catch {
@@ -422,6 +425,7 @@ export default function HomeScreen() {
             <Text style={styles.detaliuText}>🪪 Legitimație: <Text style={{ fontWeight: '700' }}>{profil.legitimatie}</Text></Text>
             <Text style={styles.detaliuText}>🏢 Divizie: <Text style={{ fontWeight: '700' }}>{profil.divizie}</Text></Text>
             <Text style={styles.detaliuText}>⏰ Orar Permis: <Text style={{ fontWeight: '700' }}>{profil.orarPermis}</Text></Text>
+            <Text style={styles.detaliuText}>🔵 Cod Bluetooth: <Text style={{ fontWeight: '700', fontFamily: 'monospace' }}>{profil.codBluetooth}</Text></Text>
             <Text style={styles.detaliuText}>✅ Acces acordat de: <Text style={{ fontWeight: '700' }}>{profil.acordatDe}</Text></Text>
           </View>
 

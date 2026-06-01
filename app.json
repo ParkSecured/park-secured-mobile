@@ -43,6 +43,8 @@
       "typedRoutes": true
     },
     "extra": {
+      "backendUrl": "https://park-secured-backend.onrender.com",
+      "cloudUrl": "https://park-secured-cloud-r62j.onrender.com/api",
       "router": {},
       "eas": {
         "projectId": "085af955-927e-406e-bc47-900146ad5077"
