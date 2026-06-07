@@ -362,7 +362,11 @@ export default function HomeScreen() {
         try {
           setStatusMesaj(`📡 Se trimite codul Bluetooth către ${bleTarget}...`);
           const bleStartTime = new Date();
-          await trimiteBluetoothCode(profil.codBluetooth, bleTarget);
+          const codCurat = profil.codBluetooth.replace(/:(?:ENTRY|EXIT)$/i, '');
+          const codDeTrimis = modAcces === 'pieton'
+            ? `${codCurat}:${tipActiune ?? 'ENTRY'}`
+            : codCurat;
+          await trimiteBluetoothCode(codDeTrimis, bleTarget);
           setStatusMesaj('✅ Cod Bluetooth trimis. Aștept răspuns...');
           // BLE reușit — polling pe ultimul eveniment creat după momentul trimiterii
           // Nu setăm isPending=true imediat — o facem doar dacă primul poll găsește PENDING
@@ -417,8 +421,11 @@ export default function HomeScreen() {
           }, PENDING_TIMEOUT);
           return; // BLE reușit — nu mai facem HTTP
         } catch {
-          // BLE a eșuat — fallback la HTTP
-          setStatusMesaj('📶 Bluetooth indisponibil. Se încearcă prin internet...');
+          if (modAcces === 'masina') {
+            setStatusMesaj('❌ Bluetooth indisponibil. Apropiați-vă de poartă și reîncercați.');
+            Alert.alert('Bluetooth indisponibil', 'Nu s-a putut contacta poarta. Apropiați-vă și reîncercați.');
+            return;
+          }
         }
       }
 
