@@ -52,8 +52,9 @@ export default function HomeScreen() {
   const [rolAngajat, setRolAngajat] = useState("");
   const [orarAcces, setOrarAcces] = useState("Se încarcă...");
   const [orarAngajat, setOrarAngajat] = useState<{ start: string | null; end: string | null }>({ start: null, end: null });
-  const [isPending, setIsPending] = useState(false);
-  const [pendingTipActiune, setPendingTipActiune] = useState<'ENTRY' | 'EXIT' | null>(null);
+  const [pendingState, setPendingState] = useState<{ active: boolean; tip: 'ENTRY' | 'EXIT' | null }>({ active: false, tip: null });
+  const isPending = pendingState.active;
+  const pendingTipActiune = pendingState.tip;
   const [ultimAprobatDe, setUltimAprobatDe] = useState<string | null>(null);
 
   const [tabActiv, setTabActiv] = useState<'acces' | 'profil' | 'prezenta'>('acces');
@@ -99,7 +100,8 @@ export default function HomeScreen() {
     return cur < start && cur > end; // interval peste miezul nopții
   };
 
-  const trimiteBluetoothCode = async (bluetoothCode: string): Promise<void> => {
+  // targetName: 'ESP32_Poarta' pentru masina, 'ParkSecured' pentru pieton
+  const trimiteBluetoothCode = async (bluetoothCode: string, targetName: string): Promise<void> => {
     return new Promise((resolve, reject) => {
       if (!bleManager) {
         reject(new Error('Bluetooth indisponibil pe web'));
@@ -116,6 +118,11 @@ export default function HomeScreen() {
           }
           if (!device) return;
 
+          // Filtreaza dupa nume doar pentru ESP32 (numele Tauri variaza pe Windows)
+          const deviceName = device.name || device.localName || '';
+          console.log(`[BLE] Gasit dispozitiv: "${deviceName}", caut: "${targetName}"`);
+          if (targetName === 'ESP32_Poarta' && deviceName !== 'ESP32_Poarta') return;
+
           try {
             bleManager.stopDeviceScan();
             const connected = await device.connect();
@@ -128,6 +135,7 @@ export default function HomeScreen() {
             await connected.cancelConnection();
             resolve();
           } catch (err) {
+            bleManager.stopDeviceScan();
             reject(err);
           }
         }
@@ -135,7 +143,7 @@ export default function HomeScreen() {
 
       setTimeout(() => {
         bleManager.stopDeviceScan();
-        reject(new Error('Timeout: laptopul nu a fost găsit'));
+        reject(new Error(`Timeout: ${targetName} nu a fost găsit`));
       }, 10000);
     });
   };
@@ -286,8 +294,7 @@ export default function HomeScreen() {
   };
 
   const startPendingPolling = (eventId: number, tipActiune: 'ENTRY' | 'EXIT') => {
-    setIsPending(true);
-    setPendingTipActiune(tipActiune);
+    setPendingState({ active: true, tip: tipActiune });
     setStatusMesaj("⏳ Aștept răspunsul portarului...");
 
     const poll = async () => {
@@ -299,8 +306,7 @@ export default function HomeScreen() {
         if (!event || event.eventStatus === 'PENDING') return;
 
         stopPolling();
-        setIsPending(false);
-        setPendingTipActiune(null);
+        setPendingState({ active: false, tip: null });
 
         if (event.eventStatus === 'ALLOWED') {
           const numePortar = event.resolvedByName ? ` ${event.resolvedByName}` : '';
@@ -324,14 +330,13 @@ export default function HomeScreen() {
 
     pollTimeoutRef.current = setTimeout(() => {
       stopPolling();
-      setIsPending(false);
-      setPendingTipActiune(null);
+      setPendingState({ active: false, tip: null });
       setStatusMesaj("⏱️ Timp expirat. Niciun răspuns de la portar.");
       Alert.alert("Timp expirat", "Portarul nu a răspuns în timp util. Accesul a fost refuzat automat.");
     }, PENDING_TIMEOUT);
   };
 
-  const handleActionarePoarta = async (tipActiune: 'ENTRY' | 'EXIT') => {
+  const handleActionarePoarta = async (tipActiune?: 'ENTRY' | 'EXIT') => {
     if (!accessSeedSalvat) {
       Alert.alert("Eroare Securitate", "Nu aveți o sesiune activă. Conectați-vă mai întâi.");
       return;
@@ -343,21 +348,29 @@ export default function HomeScreen() {
     }
 
     try {
-      setStatusMesaj(`Se trimite cerere de ${tipActiune === 'ENTRY' ? 'intrare' : 'ieșire'} către server...`);
+      setStatusMesaj(modAcces === 'masina'
+        ? 'Se trimite codul Bluetooth către poartă...'
+        : `Se trimite cerere de ${tipActiune === 'ENTRY' ? 'intrare' : 'ieșire'} către server...`
+      );
 
       // ── Canal principal: BLE ──────────────────────────────────────────────
-      // Dacă BLE reușește, NU mai facem request HTTP.
-      // HTTP devine fallback doar când BLE nu e disponibil.
+      // masina → ESP32_Poarta (BLE direct pe hardware)
+      // pieton → ParkSecured (aplicatia Tauri de la poarta)
+      const bleTarget = modAcces === 'masina' ? 'ESP32_Poarta' : 'ParkSecured';
+
       if (profil?.codBluetooth && profil.codBluetooth !== '-') {
         try {
-          setStatusMesaj('📡 Se trimite codul Bluetooth către poartă...');
-          const bleStartTime = new Date(); // salvăm momentul trimiterii
-          await trimiteBluetoothCode(profil.codBluetooth);
+          setStatusMesaj(`📡 Se trimite codul Bluetooth către ${bleTarget}...`);
+          const bleStartTime = new Date();
+          await trimiteBluetoothCode(profil.codBluetooth, bleTarget);
           setStatusMesaj('✅ Cod Bluetooth trimis. Aștept răspuns...');
           // BLE reușit — polling pe ultimul eveniment creat după momentul trimiterii
           // Nu setăm isPending=true imediat — o facem doar dacă primul poll găsește PENDING
           // (adică e în afara intervalului orar și portarul trebuie să decidă)
+          let handledEventId: number | null = null;
+          let isProcessing = false;
           const pollBle = async () => {
+            if (isProcessing) return;
             try {
               const r = await fetch(`${CLOUD_URL}/mobile/latest-event`, {
                 method: 'POST',
@@ -366,26 +379,26 @@ export default function HomeScreen() {
               });
               const d = await r.json();
               const ev = d.data;
-              // Ignoră evenimente mai vechi decât momentul trimiterii BLE
               if (!ev) return;
               if (ev.eventTime && new Date(ev.eventTime) < bleStartTime) return;
-              // Dacă e PENDING — arată bannerul de așteptare
+              if (handledEventId !== null && ev.eventId === handledEventId) return;
               if (ev.eventStatus === 'PENDING') {
                 if (!isPending) {
-                  setIsPending(true);
-                  setPendingTipActiune(tipActiune);
+                  setPendingState({ active: true, tip: tipActiune ?? null });
                 }
                 return;
               }
+              isProcessing = true;
+              handledEventId = ev.eventId;
               stopPolling();
-              setIsPending(false);
-              setPendingTipActiune(null);
+              setPendingState({ active: false, tip: null });
               if (ev.eventStatus === 'ALLOWED') {
                 const numePortar = ev.resolvedByName ? ` de ${ev.resolvedByName}` : '';
                 setUltimAprobatDe(ev.resolvedByName || null);
-                setStatusMesaj(`✅ ${tipActiune === 'ENTRY' ? 'Intrare' : 'Ieșire'} aprobată${numePortar}.`);
+                const label = tipActiune === 'ENTRY' ? 'Intrare' : tipActiune === 'EXIT' ? 'Ieșire' : 'Acces';
+                setStatusMesaj(`✅ ${label} aprobată${numePortar}.`);
                 Alert.alert(
-                  tipActiune === 'ENTRY' ? '✅ Intrare Permisă' : '✅ Ieșire Permisă',
+                  `✅ ${label} Permisă`,
                   `Acces aprobat${numePortar}. Poarta se deschide.`
                 );
               } else {
@@ -398,8 +411,7 @@ export default function HomeScreen() {
           pollIntervalRef.current = setInterval(pollBle, PENDING_POLL_INTERVAL);
           pollTimeoutRef.current = setTimeout(() => {
             stopPolling();
-            setIsPending(false);
-            setPendingTipActiune(null);
+            setPendingState({ active: false, tip: null });
             setStatusMesaj('⏱️ Timp expirat.');
             Alert.alert('Timp expirat', 'Poarta nu a răspuns în timp util. Accesul a fost refuzat automat.');
           }, PENDING_TIMEOUT);
@@ -420,8 +432,7 @@ export default function HomeScreen() {
       const data = await response.json();
 
       if (data.status === 'PENDING' && data.eventId) {
-        setIsPending(true);
-        setPendingTipActiune(tipActiune);
+        setPendingState({ active: true, tip: tipActiune ?? null });
         startPendingPolling(data.eventId, tipActiune);
         return;
       }
@@ -458,8 +469,7 @@ export default function HomeScreen() {
             setIsAutentificat(false);
             setNumeAngajat("");
             setRolAngajat("");
-            setIsPending(false);
-            setPendingTipActiune(null);
+            setPendingState({ active: false, tip: null });
             setProfil(null);
             setEvenimentePrezenta([]);
             setTabActiv('acces');
@@ -538,7 +548,11 @@ export default function HomeScreen() {
             <ActivityIndicator size="small" color="#d97706" />
             <View>
               <Text style={{ fontWeight: '700', color: '#92400e', fontSize: 15 }}>
-                {pendingTipActiune === 'ENTRY' ? '🟡 Intrare în afara orarului' : '🟡 Ieșire în afara orarului'}
+                {modAcces === 'masina'
+                  ? '🟡 Acces în afara orarului'
+                  : pendingTipActiune === 'ENTRY'
+                    ? '🟡 Intrare în afara orarului'
+                    : '🟡 Ieșire în afara orarului'}
               </Text>
               <Text style={{ color: '#b45309', fontSize: 13, marginTop: 4 }}>
                 Aștept răspunsul portarului... (max 1 minut)
@@ -590,22 +604,32 @@ export default function HomeScreen() {
         </TouchableOpacity>
       </View>
 
-      <View style={{ flexDirection: 'row', width: '100%', gap: 10, marginBottom: 12 }}>
+      {modAcces === 'masina' ? (
         <TouchableOpacity
-          style={[styles.butonAcces, { flex: 1, opacity: isPending ? 0.5 : 1 }]}
-          onPress={() => handleActionarePoarta('ENTRY')}
+          style={[styles.butonAcces, { width: '100%', marginBottom: 12, opacity: isPending ? 0.5 : 1 }]}
+          onPress={() => handleActionarePoarta()}
           disabled={isPending}
         >
-          <Text style={styles.butonText}>🟢 Intrare Poartă</Text>
+          <Text style={styles.butonText}>🚗 Deschide Poarta</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.butonAcces, { flex: 1, backgroundColor: '#d97706', shadowColor: '#d97706', opacity: isPending ? 0.5 : 1 }]}
-          onPress={() => handleActionarePoarta('EXIT')}
-          disabled={isPending}
-        >
-          <Text style={styles.butonText}>🟠 Ieșire Poartă</Text>
-        </TouchableOpacity>
-      </View>
+      ) : (
+        <View style={{ flexDirection: 'row', width: '100%', gap: 10, marginBottom: 12 }}>
+          <TouchableOpacity
+            style={[styles.butonAcces, { flex: 1, opacity: isPending ? 0.5 : 1 }]}
+            onPress={() => handleActionarePoarta('ENTRY')}
+            disabled={isPending}
+          >
+            <Text style={styles.butonText}>🟢 Intrare Poartă</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.butonAcces, { flex: 1, backgroundColor: '#d97706', shadowColor: '#d97706', opacity: isPending ? 0.5 : 1 }]}
+            onPress={() => handleActionarePoarta('EXIT')}
+            disabled={isPending}
+          >
+            <Text style={styles.butonText}>🟠 Ieșire Poartă</Text>
+          </TouchableOpacity>
+        </View>
+      )}
       <View style={{ height: 20 }} />
     </ScrollView>
   );
