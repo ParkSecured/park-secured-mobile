@@ -5,9 +5,23 @@ import {
   ActivityIndicator, Alert, Modal, Platform, ScrollView,
   Text, TextInput, TouchableOpacity, View, PermissionsAndroid
 } from 'react-native';
+import Ionicons from 'react-native-vector-icons/Ionicons';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 import { styles } from './styles';
 
+// Wrapper care corectează alinierea verticală a iconițelor react-native-vector-icons
+const iconViewStyle = { alignSelf: 'center' as const };
+const IonIcon = ({ name, size, color }: { name: string; size: number; color: string }) => (
+  <View style={iconViewStyle}><Ionicons name={name} size={size} color={color} /></View>
+);
+const MatIcon = ({ name, size, color }: { name: string; size: number; color: string }) => (
+  <View style={iconViewStyle}><MaterialIcons name={name} size={size} color={color} /></View>
+);
+const MatComIcon = ({ name, size, color }: { name: string; size: number; color: string }) => (
+  <View style={iconViewStyle}><MaterialCommunityIcons name={name} size={size} color={color} /></View>
+);
 
 const BleManagerCtor = Platform.OS === 'web' ? null : require('react-native-ble-plx').BleManager;
 const bleManager = BleManagerCtor ? new BleManagerCtor() : null;
@@ -257,7 +271,7 @@ export default function HomeScreen() {
 
       if (!response.ok || !data.success) {
         if (response.status === 403 && data.message?.includes("schimbare")) {
-          setStatusMesaj("⏳ Cerere de schimbare dispozitiv trimisă. Așteptați aprobarea HR, apoi reîncercați.");
+          setStatusMesaj("Cerere de schimbare dispozitiv trimisă. Așteptați aprobarea HR, apoi reîncercați.");
           Alert.alert(
             "Cerere trimisă",
             "Există deja un dispozitiv înregistrat. HR-ul trebuie să aprobe schimbarea. Reîncercați după aprobare."
@@ -295,7 +309,7 @@ export default function HomeScreen() {
 
   const startPendingPolling = (eventId: number, tipActiune: 'ENTRY' | 'EXIT') => {
     setPendingState({ active: true, tip: tipActiune });
-    setStatusMesaj("⏳ Aștept răspunsul portarului...");
+    setStatusMesaj("Aștept răspunsul portarului...");
 
     const poll = async () => {
       try {
@@ -311,15 +325,15 @@ export default function HomeScreen() {
         if (event.eventStatus === 'ALLOWED') {
           const numePortar = event.resolvedByName ? ` ${event.resolvedByName}` : '';
           setUltimAprobatDe(event.resolvedByName || null);
-          setStatusMesaj(`✅ ${tipActiune === 'ENTRY' ? 'Intrare' : 'Ieșire'} aprobată${numePortar}.`);
+          setStatusMesaj(`${tipActiune === 'ENTRY' ? 'Intrare' : 'Ieșire'} aprobată${numePortar}.`);
           Alert.alert(
-            tipActiune === 'ENTRY' ? "✅ Intrare Permisă" : "✅ Ieșire Permisă",
+            tipActiune === 'ENTRY' ? "Intrare permisă" : "Ieșire permisă",
             `Portarul${numePortar} a aprobat accesul. Poarta se deschide.`
           );
         } else {
           setUltimAprobatDe(null);
-          setStatusMesaj("❌ Acces refuzat de portar.");
-          Alert.alert("❌ Acces Refuzat", "Portarul a refuzat accesul.");
+          setStatusMesaj("Acces refuzat de portar.");
+          Alert.alert("Acces refuzat", "Portarul a refuzat accesul.");
         }
       } catch {
         // ignorăm erorile de rețea în polling
@@ -331,14 +345,14 @@ export default function HomeScreen() {
     pollTimeoutRef.current = setTimeout(() => {
       stopPolling();
       setPendingState({ active: false, tip: null });
-      setStatusMesaj("⏱️ Timp expirat. Niciun răspuns de la portar.");
+      setStatusMesaj("Timp expirat. Niciun răspuns de la portar.");
       Alert.alert("Timp expirat", "Portarul nu a răspuns în timp util. Accesul a fost refuzat automat.");
     }, PENDING_TIMEOUT);
   };
 
   const handleActionarePoarta = async (tipActiune?: 'ENTRY' | 'EXIT') => {
     if (!accessSeedSalvat) {
-      Alert.alert("Eroare Securitate", "Nu aveți o sesiune activă. Conectați-vă mai întâi.");
+      Alert.alert("Eroare securitate", "Nu aveți o sesiune activă. Conectați-vă mai întâi.");
       return;
     }
 
@@ -360,14 +374,14 @@ export default function HomeScreen() {
 
       if (profil?.codBluetooth && profil.codBluetooth !== '-') {
         try {
-          setStatusMesaj(`📡 Se trimite codul Bluetooth către ${bleTarget}...`);
+          setStatusMesaj(`Se trimite codul Bluetooth către ${bleTarget}...`);
           const bleStartTime = new Date();
           const codCurat = profil.codBluetooth.replace(/:(?:ENTRY|EXIT)$/i, '');
           const codDeTrimis = modAcces === 'pieton'
             ? `${codCurat}:${tipActiune ?? 'ENTRY'}`
             : codCurat;
           await trimiteBluetoothCode(codDeTrimis, bleTarget);
-          setStatusMesaj('✅ Cod Bluetooth trimis. Aștept răspuns...');
+          setStatusMesaj('Cod bluetooth trimis. Aștept răspuns...');
           // BLE reușit — polling pe ultimul eveniment creat după momentul trimiterii
           // Nu setăm isPending=true imediat — o facem doar dacă primul poll găsește PENDING
           // (adică e în afara intervalului orar și portarul trebuie să decidă)
@@ -400,15 +414,15 @@ export default function HomeScreen() {
                 const numePortar = ev.resolvedByName ? ` de ${ev.resolvedByName}` : '';
                 setUltimAprobatDe(ev.resolvedByName || null);
                 const label = tipActiune === 'ENTRY' ? 'Intrare' : tipActiune === 'EXIT' ? 'Ieșire' : 'Acces';
-                setStatusMesaj(`✅ ${label} aprobată${numePortar}.`);
+                setStatusMesaj(`${label} aprobată${numePortar}.`);
                 Alert.alert(
-                  `✅ ${label} Permisă`,
+                  `${label} Permisă`,
                   `Acces aprobat${numePortar}. Poarta se deschide.`
                 );
               } else {
                 setUltimAprobatDe(null);
-                setStatusMesaj('❌ Acces refuzat.');
-                Alert.alert('❌ Acces Refuzat', 'Accesul a fost refuzat.');
+                setStatusMesaj('Acces refuzat.');
+                Alert.alert('Acces refuzat', 'Accesul a fost refuzat.');
               }
             } catch { /* ignorăm erorile de rețea în polling */ }
           };
@@ -416,13 +430,13 @@ export default function HomeScreen() {
           pollTimeoutRef.current = setTimeout(() => {
             stopPolling();
             setPendingState({ active: false, tip: null });
-            setStatusMesaj('⏱️ Timp expirat.');
+            setStatusMesaj('Timp expirat.');
             Alert.alert('Timp expirat', 'Poarta nu a răspuns în timp util. Accesul a fost refuzat automat.');
           }, PENDING_TIMEOUT);
           return; // BLE reușit — nu mai facem HTTP
         } catch {
           if (modAcces === 'masina') {
-            setStatusMesaj('❌ Bluetooth indisponibil. Apropiați-vă de poartă și reîncercați.');
+            setStatusMesaj('Bluetooth indisponibil. Apropiați-vă de poartă și reîncercați.');
             Alert.alert('Bluetooth indisponibil', 'Nu s-a putut contacta poarta. Apropiați-vă și reîncercați.');
             return;
           }
@@ -445,14 +459,14 @@ export default function HomeScreen() {
       }
 
       if (!response.ok || !data.authorized) {
-        Alert.alert("Acces Refuzat", data.message || "Acces neautorizat.");
+        Alert.alert("Acces refuzat", data.message || "Acces neautorizat.");
         setStatusMesaj("Acces refuzat de server.");
         return;
       }
 
-      setStatusMesaj(`✅ ${tipActiune === 'ENTRY' ? 'Intrare' : 'Ieșire'} confirmată. Poarta se deschide.`);
+      setStatusMesaj(`${tipActiune === 'ENTRY' ? 'Intrare' : 'Ieșire'} confirmată. Poarta se deschide.`);
       Alert.alert(
-        tipActiune === 'ENTRY' ? "✅ Intrare Permisă" : "✅ Ieșire Permisă",
+        tipActiune === 'ENTRY' ? "Intrare permisă" : "Ieșire permisă",
         `Bine ai venit, ${data.name || numeAngajat}! Poarta se deschide.`
       );
     } catch (error) {
@@ -468,7 +482,7 @@ export default function HomeScreen() {
       [
         { text: "Anulează", style: "cancel" },
         {
-          text: "Da, Logout",
+          text: "Da, logout",
           style: "destructive",
           onPress: () => {
             stopPolling();
@@ -518,7 +532,7 @@ export default function HomeScreen() {
       setTrebuieSchimbareParola(false);
       setParolaNoua('');
       setParolaConfirm('');
-      Alert.alert("✅ Parolă schimbată", `Bine ai venit, ${numeAngajat}! Parola a fost actualizată.`);
+      Alert.alert("Parolă schimbată", `Bine ai venit, ${numeAngajat}! Parola a fost actualizată.`);
     } catch {
       Alert.alert("Eroare rețea", "Nu s-a putut contacta serverul.");
     } finally {
@@ -531,21 +545,36 @@ export default function HomeScreen() {
     <ScrollView style={styles.dashboardContainer} showsVerticalScrollIndicator={false}>
       <View style={styles.card}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text style={styles.statusLabel}>Profil Angajat Autentificat</Text>
+          <Text style={styles.statusLabel}>Profil angajat autentificat</Text>
           <TouchableOpacity onPress={handleDeconectare}>
-            <Text style={{ color: '#ef4444', fontSize: 12, fontWeight: 'bold' }}>🚪 Deconectare</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <IonIcon name="log-out-outline" size={14} color="#ef4444" />
+              <Text style={{ color: '#ef4444', fontSize: 12, fontWeight: 'bold' }}>Deconectare</Text>
+            </View>
           </TouchableOpacity>
         </View>
-        <Text style={styles.numeText}>👤 {numeAngajat}</Text>
-        <Text style={styles.detaliuText}>💼 Rol: <Text style={{ fontWeight: '700' }}>{rolAngajat}</Text></Text>
-        <Text style={styles.detaliuText}>⏰ Orar Permis: {orarAcces}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <IonIcon name="person-circle-outline" size={20} color="#111827" />
+          <Text style={styles.numeText}>{numeAngajat}</Text>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+          <MatIcon name="work-outline" size={14} color="#4b5563" />
+          <Text style={styles.detaliuText}>Rol: <Text style={{ fontWeight: '700' }}>{rolAngajat}</Text></Text>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <IonIcon name="time-outline" size={14} color="#4b5563" />
+          <Text style={styles.detaliuText}>Orar permis: {orarAcces}</Text>
+        </View>
       </View>
 
       {ultimAprobatDe && (
         <View style={[styles.card, { borderColor: '#16a34a', borderWidth: 1, backgroundColor: '#f0fdf4' }]}>
-          <Text style={{ color: '#166534', fontSize: 13, fontWeight: '600' }}>
-            ✅ Ultima intrare aprobată de: <Text style={{ fontWeight: '700' }}>{ultimAprobatDe}</Text>
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <IonIcon name="checkmark-circle" size={15} color="#16a34a" />
+            <Text style={{ color: '#166534', fontSize: 13, fontWeight: '600' }}>
+              Ultima intrare aprobată de: <Text style={{ fontWeight: '700' }}>{ultimAprobatDe}</Text>
+            </Text>
+          </View>
         </View>
       )}
 
@@ -556,10 +585,10 @@ export default function HomeScreen() {
             <View>
               <Text style={{ fontWeight: '700', color: '#92400e', fontSize: 15 }}>
                 {modAcces === 'masina'
-                  ? '🟡 Acces în afara orarului'
+                  ? 'Acces în afara orarului'
                   : pendingTipActiune === 'ENTRY'
-                    ? '🟡 Intrare în afara orarului'
-                    : '🟡 Ieșire în afara orarului'}
+                    ? 'Intrare în afara orarului'
+                    : 'Ieșire în afara orarului'}
               </Text>
               <Text style={{ color: '#b45309', fontSize: 13, marginTop: 4 }}>
                 Aștept răspunsul portarului... (max 1 minut)
@@ -569,7 +598,7 @@ export default function HomeScreen() {
         </View>
       )}
 
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 14, gap: 0 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 8, gap: 0 }}>
         <TouchableOpacity
           onPress={() => setModAcces('pieton')}
           style={{
@@ -584,7 +613,7 @@ export default function HomeScreen() {
             borderColor: modAcces === 'pieton' ? '#2563eb' : '#cbd5e1',
           }}
         >
-          <Text style={{ fontSize: 20 }}>🚶</Text>
+          <IonIcon name="walk" size={22} color={modAcces === 'pieton' ? '#fff' : '#64748b'} />
           <Text style={{ fontSize: 12, fontWeight: '700', color: modAcces === 'pieton' ? '#fff' : '#64748b', marginTop: 2 }}>
             Pieton
           </Text>
@@ -604,7 +633,7 @@ export default function HomeScreen() {
             borderColor: modAcces === 'masina' ? '#2563eb' : '#cbd5e1',
           }}
         >
-          <Text style={{ fontSize: 20 }}>🚗</Text>
+          <MatIcon name="directions-car" size={22} color={modAcces === 'masina' ? '#fff' : '#64748b'} />
           <Text style={{ fontSize: 12, fontWeight: '700', color: modAcces === 'masina' ? '#fff' : '#64748b', marginTop: 2 }}>
             Mașină
           </Text>
@@ -613,31 +642,40 @@ export default function HomeScreen() {
 
       {modAcces === 'masina' ? (
         <TouchableOpacity
-          style={[styles.butonAcces, { width: '100%', marginBottom: 12, opacity: isPending ? 0.5 : 1 }]}
+          style={[styles.butonAcces, { width: '100%', marginBottom: 8, opacity: isPending ? 0.5 : 1 }]}
           onPress={() => handleActionarePoarta()}
           disabled={isPending}
         >
-          <Text style={styles.butonText}>🚗 Deschide Poarta</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <MatIcon name="directions-car" size={18} color="#fff" />
+            <Text style={styles.butonText}>Deschide poarta</Text>
+          </View>
         </TouchableOpacity>
       ) : (
-        <View style={{ flexDirection: 'row', width: '100%', gap: 10, marginBottom: 12 }}>
+        <View style={{ flexDirection: 'row', width: '100%', gap: 10, marginBottom: 8 }}>
           <TouchableOpacity
             style={[styles.butonAcces, { flex: 1, opacity: isPending ? 0.5 : 1 }]}
             onPress={() => handleActionarePoarta('ENTRY')}
             disabled={isPending}
           >
-            <Text style={styles.butonText}>🟢 Intrare Poartă</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <IonIcon name="enter-outline" size={18} color="#fff" />
+              <Text style={styles.butonText}>Intrare poartă</Text>
+            </View>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.butonAcces, { flex: 1, backgroundColor: '#d97706', shadowColor: '#d97706', opacity: isPending ? 0.5 : 1 }]}
             onPress={() => handleActionarePoarta('EXIT')}
             disabled={isPending}
           >
-            <Text style={styles.butonText}>🟠 Ieșire Poartă</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <IonIcon name="exit-outline" size={18} color="#fff" />
+              <Text style={styles.butonText}>Ieșire poartă</Text>
+            </View>
           </TouchableOpacity>
         </View>
       )}
-      <View style={{ height: 20 }} />
+      <View style={{ height: 8 }} />
     </ScrollView>
   );
 
@@ -652,33 +690,55 @@ export default function HomeScreen() {
       ) : profil ? (
         <>
           <View style={styles.card}>
-            <Text style={styles.statusLabel}>Date Personale</Text>
-            <Text style={styles.numeText}>👤 {profil.numeComplet}</Text>
-            <Text style={styles.detaliuText}>🪪 Legitimație: <Text style={{ fontWeight: '700' }}>{profil.legitimatie}</Text></Text>
-            <Text style={styles.detaliuText}>🏢 Divizie: <Text style={{ fontWeight: '700' }}>{profil.divizie}</Text></Text>
-            <Text style={styles.detaliuText}>⏰ Orar Permis: <Text style={{ fontWeight: '700' }}>{profil.orarPermis}</Text></Text>
-            <Text style={styles.detaliuText}>🔵 Cod Bluetooth: <Text style={{ fontWeight: '700', fontFamily: 'monospace' }}>{profil.codBluetooth}</Text></Text>
-            <Text style={styles.detaliuText}>✅ Acces acordat de: <Text style={{ fontWeight: '700' }}>{profil.acordatDe}</Text></Text>
+            <Text style={styles.statusLabel}>Date personale</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <IonIcon name="person-circle-outline" size={20} color="#111827" />
+              <Text style={styles.numeText}>{profil.numeComplet}</Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <MatComIcon name="card-account-details-outline" size={14} color="#4b5563" />
+              <Text style={styles.detaliuText}>Legitimație: <Text style={{ fontWeight: '700' }}>{profil.legitimatie}</Text></Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <MatIcon name="business" size={14} color="#4b5563" />
+              <Text style={styles.detaliuText}>Divizie: <Text style={{ fontWeight: '700' }}>{profil.divizie}</Text></Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <IonIcon name="time-outline" size={14} color="#4b5563" />
+              <Text style={styles.detaliuText}>Orar permis: <Text style={{ fontWeight: '700' }}>{profil.orarPermis}</Text></Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <MatComIcon name="bluetooth" size={14} color="#4b5563" />
+              <Text style={styles.detaliuText}>Cod bluetooth: <Text style={{ fontWeight: '700', fontFamily: 'monospace' }}>{profil.codBluetooth}</Text></Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <IonIcon name="checkmark-circle-outline" size={14} color="#4b5563" />
+              <Text style={styles.detaliuText}>Acces acordat de: <Text style={{ fontWeight: '700' }}>{profil.acordatDe}</Text></Text>
+            </View>
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.statusLabel}>Colegi din Divizie</Text>
+            <Text style={styles.statusLabel}>Colegi din divizie</Text>
             {profil.colegi.length === 0 ? (
               <Text style={styles.detaliuText}>Nu există alți colegi în această divizie.</Text>
             ) : (
               profil.colegi.map((coleg, index) => (
-                <Text key={index} style={[styles.detaliuText, { paddingVertical: 3 }]}>
-                  👥 {coleg.name}
-                </Text>
+                <View key={index} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 3 }}>
+                  <IonIcon name="people-outline" size={14} color="#4b5563" />
+                  <Text style={styles.detaliuText}>{coleg.name}</Text>
+                </View>
               ))
             )}
           </View>
 
           <TouchableOpacity
-            style={[styles.butonLogin, { marginTop: 4 }]}
+            style={[styles.butonLogin, { marginTop: 2 }]}
             onPress={() => accessSeedSalvat && incarcaProfil(accessSeedSalvat)}
           >
-            <Text style={styles.butonText}>🔄 Reîmprospătează</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <IonIcon name="refresh" size={16} color="#fff" />
+              <Text style={styles.butonText}>Reîmprospătează</Text>
+            </View>
           </TouchableOpacity>
         </>
       ) : (
@@ -692,7 +752,7 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
       )}
-      <View style={{ height: 20 }} />
+      <View style={{ height: 8 }} />
     </ScrollView>
   );
 
@@ -700,22 +760,31 @@ export default function HomeScreen() {
   const renderTabPrezenta = () => (
     <ScrollView style={styles.dashboardContainer} showsVerticalScrollIndicator={false}>
       <View style={styles.statsCard}>
-        <Text style={styles.statsLabel}>Prezență Luna Curentă</Text>
-        <Text style={styles.statsNumar}>⚡ {evenimentePrezenta.length} Mișcări înregistrate</Text>
+        <Text style={styles.statsLabel}>Prezență luna curentă</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <MatIcon name="bolt" size={20} color="#f8fafc" />
+          <Text style={styles.statsNumar}>{evenimentePrezenta.length} mișcări înregistrate</Text>
+        </View>
       </View>
 
       <TouchableOpacity
-        style={[styles.butonLogin, { marginBottom: 12, opacity: prezentaLoading ? 0.6 : 1 }]}
+        style={[styles.butonLogin, { marginBottom: 8, opacity: prezentaLoading ? 0.6 : 1 }]}
         onPress={() => accessSeedSalvat && incarcaPrezenta(accessSeedSalvat)}
         disabled={prezentaLoading}
       >
         {prezentaLoading
           ? <ActivityIndicator color="#fff" />
-          : <Text style={styles.butonText}>🔄 Vezi prezența mea pe luna curentă</Text>
+          : <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <IonIcon name="refresh" size={16} color="#fff" />
+              <Text style={styles.butonText}>Vezi prezența mea pe luna curentă</Text>
+            </View>
         }
       </TouchableOpacity>
 
-      <Text style={styles.sectiuneTitlu}>📋 Istoric Intrări / Ieșiri</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <MatIcon name="list-alt" size={15} color="#374151" />
+        <Text style={styles.sectiuneTitlu}>Istoric intrări / ieșiri</Text>
+      </View>
 
       {evenimentePrezenta.length === 0 && !prezentaLoading && (
         <Text style={{ color: '#9ca3af', fontSize: 13, textAlign: 'center', marginTop: 20 }}>
@@ -735,33 +804,39 @@ export default function HomeScreen() {
             }]}>
               {log.event_status}
             </Text>
-            <Text style={styles.gateText}>🚪 {log.gate_code}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 'auto' }}>
+              <MatComIcon name="door" size={13} color="#4b5563" />
+              <Text style={styles.gateText}>{log.gate_code}</Text>
+            </View>
           </View>
           {log.event_time && (
-            <Text style={{ fontSize: 11, color: '#9ca3af', marginBottom: 3 }}>
-              🕐 {new Date(log.event_time).toLocaleString('ro-RO')}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 3 }}>
+            <IonIcon name="time-outline" size={12} color="#9ca3af" />
+            <Text style={{ fontSize: 11, color: '#9ca3af' }}>
+              {new Date(log.event_time).toLocaleString('ro-RO')}
             </Text>
+          </View>
           )}
           <Text style={styles.notesText}>{log.notes}</Text>
         </View>
       ))}
-      <View style={{ height: 20 }} />
+      <View style={{ height: 8 }} />
     </ScrollView>
   );
 
   // ─── RENDER PRINCIPAL ─────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
-      <Text style={styles.titlu}>ParkSecured MobileID</Text>
-      <Text style={styles.subtitlu}>Sistem de Gestiune și Audit Automat</Text>
+      <Text style={[styles.titlu, { marginTop: 4, marginBottom: 0 }]}>ParkSecured MobileID</Text>
+      <Text style={[styles.subtitlu, { marginBottom: 8 }]}>Sistem de gestiune și audit automat</Text>
 
       {!isAutentificat ? (
         <View style={styles.card}>
-          <Text style={styles.statusLabel}>Autentificare Cont Angajat:</Text>
+          <Text style={styles.statusLabel}>Autentificare cont angajat:</Text>
           <TextInput style={styles.input} value={email} onChangeText={setEmail} placeholder="Email" autoCapitalize="none" />
           <TextInput style={styles.input} value={parola} onChangeText={setParola} placeholder="Parolă" secureTextEntry />
           <TouchableOpacity style={styles.butonLogin} onPress={handleLoginSiInregistrare}>
-            <Text style={styles.butonText}>Pasul 1: Conectare în Sistem</Text>
+            <Text style={styles.butonText}>Conectare</Text>
           </TouchableOpacity>
         </View>
       ) : (
@@ -769,27 +844,30 @@ export default function HomeScreen() {
           {/* Tab Bar */}
           <View style={{
             flexDirection: 'row', width: '100%', backgroundColor: '#fff',
-            borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: '#e5e7eb', overflow: 'hidden'
+            borderRadius: 12, marginBottom: 8, borderWidth: 1, borderColor: '#e5e7eb', overflow: 'hidden'
           }}>
             {([
-              { key: 'acces', label: '🔑 Acces' },
-              { key: 'profil', label: '👤 Date Proprii' },
-              { key: 'prezenta', label: '📋 Prezență' },
+              { key: 'acces', label: 'Acces', icon: <IonIcon name="key" size={13} color={tabActiv === 'acces' ? '#fff' : '#6b7280'} /> },
+              { key: 'profil', label: 'Date proprii', icon: <IonIcon name="person" size={13} color={tabActiv === 'profil' ? '#fff' : '#6b7280'} /> },
+              { key: 'prezenta', label: 'Prezență', icon: <MatIcon name="list-alt" size={13} color={tabActiv === 'prezenta' ? '#fff' : '#6b7280'} /> },
             ] as const).map((tab) => (
               <TouchableOpacity
                 key={tab.key}
                 style={{
-                  flex: 1, paddingVertical: 10, alignItems: 'center',
+                  flex: 1, paddingVertical: 8, alignItems: 'center',
                   backgroundColor: tabActiv === tab.key ? '#2563eb' : '#fff',
                 }}
                 onPress={() => setTabActiv(tab.key)}
               >
-                <Text style={{
-                  fontSize: 11, fontWeight: '700',
-                  color: tabActiv === tab.key ? '#fff' : '#6b7280'
-                }}>
-                  {tab.label}
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  {tab.icon}
+                  <Text style={{
+                    fontSize: 11, fontWeight: '700',
+                    color: tabActiv === tab.key ? '#fff' : '#6b7280'
+                  }}>
+                    {tab.label}
+                  </Text>
+                </View>
               </TouchableOpacity>
             ))}
           </View>
@@ -803,7 +881,10 @@ export default function HomeScreen() {
       <Modal visible={trebuieSchimbareParola} transparent animationType="fade">
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
           <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 28, width: '100%', maxWidth: 380 }}>
-            <Text style={{ fontSize: 22, fontWeight: '800', color: '#1e293b', marginBottom: 6 }}>🔐 Schimbă parola</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <MatIcon name="lock-outline" size={22} color="#1e293b" />
+              <Text style={{ fontSize: 22, fontWeight: '800', color: '#1e293b' }}>Schimbă parola</Text>
+            </View>
             <Text style={{ fontSize: 14, color: '#64748b', marginBottom: 20, lineHeight: 20 }}>
               Acesta este primul tău login. Trebuie să îți setezi o parolă personală înainte de a continua.
             </Text>
@@ -843,14 +924,11 @@ export default function HomeScreen() {
       </Modal>
 
       <View style={styles.statusCard}>
-        <Text style={styles.statusText}>ℹ️ Status: {statusMesaj}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <IonIcon name="information-circle-outline" size={14} color="#1d4ed8" />
+          <Text style={styles.statusText}>Status: {statusMesaj}</Text>
+        </View>
       </View>
-
-      {!isAutentificat && (
-        <TouchableOpacity style={[styles.butonAcces, styles.butonDezactivat]} disabled={true}>
-          <Text style={styles.butonText}>Așteptare Pasul 1 (Conectare)</Text>
-        </TouchableOpacity>
-      )}
     </View>
   );
 }
